@@ -1,6 +1,6 @@
 local success, result = pcall(function()
     -- 1. Define the URL
-    local url = "https://raw.githubusercontent.com/CTabdul15/ScriptRoblox/script/client_side"
+    local url = "https://raw.githubusercontent.com/CTabdul15/ScriptRoblox/script/client_side.lua"
     print("--> Attempting to download script from: " .. url)
 
     -- 2. Download the script content

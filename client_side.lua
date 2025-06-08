@@ -1,7 +1,7 @@
 ﻿-- Dieses LocalScript erstellt eine erweiterte, interaktive und verschiebbare UI.
 -- Es ermöglicht das Erkunden von Spieler-Objekten, das clientseitige Manipulieren von Charakteren und das Anzeigen/Kopieren des eigenen Quellcodes.
 -- Es enthält auch eine Einstellungs-Registerkarte, um einen Hotkey zum Ein-/Ausblenden der Benutzeroberfläche festzulegen.
--- Version 23: Tab-Sortierung korrigiert, um die Skript-Reihenfolge einzuhalten.
+-- Version 24: Code-Bereinigung zur Behebung von Syntaxfehlern durch unsichtbare Zeichen.
 --
 -- #################################################################################################
 -- ## WICHTIGER HINWEIS ZUR FUNKTIONSWEISE:                                                       ##
@@ -11,7 +11,7 @@
 -- #################################################################################################
 --
 
-print("CLIENT: Erweiterter Spieler-Explorer v23 (Tab-Sortierung korrigiert) gestartet.")
+print("CLIENT: Erweiterter Spieler-Explorer v24 (Code-Bereinigung) gestartet.")
 
 -- Services
 local Players = game:GetService("Players")
@@ -70,7 +70,7 @@ local title = Instance.new("TextLabel")
 title.Name = "Title"
 title.Size = UDim2.new(1, 0, 0, 30)
 title.BackgroundColor3 = Color3.fromRGB(60, 63, 75)
-title.Text = "  Spieler-Explorer v23"
+title.Text = "  Spieler-Explorer v24"
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -260,7 +260,7 @@ function createEntry(object, parentUi, indent)
 
 	entryButton.InputBegan:Connect(function(input)
 		if input.UserInputType ~= Enum.UserInputType.MouseButton2 then return end
-		
+
 		for _, v in ipairs(entryButton:GetChildren()) do
 			if v.Name == "ContextMenu" then v:Destroy() end
 		end
@@ -269,7 +269,7 @@ function createEntry(object, parentUi, indent)
 		contextMenu.Name = "ContextMenu"
 		contextMenu.Size = UDim2.new(0, 150, 0, 0)
 		contextMenu.AutomaticSize = Enum.AutomaticSize.Y
-		contextMenu.Position = UDim2.new(0, 5, 1, 5) 
+		contextMenu.Position = UDim2.new(0, 5, 1, 5)
 		contextMenu.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
 		contextMenu.ZIndex = 20
 		contextMenu.Parent = entryButton
@@ -296,7 +296,7 @@ function createEntry(object, parentUi, indent)
 			wait(1)
 			contextMenu:Destroy()
 		end)
-		
+
 		if object:IsA("ValueBase") then
 			local editValueButton = createMenuButton("Wert bearbeiten")
 			editValueButton.MouseButton1Click:Connect(function()
@@ -331,7 +331,7 @@ function createEntry(object, parentUi, indent)
 				end)
 			end)
 		end
-		
+
 		local closeConn
 		closeConn = UserInputService.InputBegan:Connect(function()
 			if contextMenu and contextMenu.Parent then
@@ -392,7 +392,7 @@ function createPlayerEntry(player)
 	detailsContainer.Visible = false
 	detailsContainer.Parent = playerMainFrame
 	detailsContainer.LayoutOrder = 2
-	
+
     local detailsLayout = Instance.new("UIListLayout")
     detailsLayout.Padding = UDim.new(0, 4)
     detailsLayout.SortOrder = Enum.SortOrder.LayoutOrder
@@ -421,7 +421,7 @@ function createPlayerEntry(player)
 	tabLayout.FillDirection = Enum.FillDirection.Horizontal
 	tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
 	tabLayout.Padding = UDim.new(0, 5)
-	tabLayout.SortOrder = Enum.SortOrder.LayoutOrder -- KORREKTUR: Sortierung explizit festlegen
+	tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
 	tabLayout.Parent = tabContainer
 
     -- Verbindung zur Aktualisierung der CanvasSize
@@ -436,12 +436,12 @@ function createPlayerEntry(player)
 	pagesFrame.BackgroundTransparency = 1
 	pagesFrame.Parent = detailsContainer
 	pagesFrame.LayoutOrder = 2
-	
+
 	local activeTabColor = Color3.fromRGB(80, 120, 220)
 	local inactiveTabColor = Color3.fromRGB(60, 60, 70)
 	local pages = {}
 	local tabs = {}
-	local tabLayoutOrder = 1 -- KORREKTUR: Zähler für die Layout-Reihenfolge
+	local tabLayoutOrder = 1
 
 	local function createTab(name)
 		local page = Instance.new("Frame")
@@ -463,13 +463,13 @@ function createPlayerEntry(player)
 		tabButton.Font = Enum.Font.GothamBold
 		tabButton.TextSize = 14
 		tabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-		tabButton.LayoutOrder = tabLayoutOrder -- KORREKTUR: LayoutOrder zuweisen
+		tabButton.LayoutOrder = tabLayoutOrder
 		tabButton.Parent = tabContainer
 		local tabCorner = Instance.new("UICorner"); tabCorner.CornerRadius = UDim.new(0, 4); tabCorner.Parent = tabButton
         local tabPadding = Instance.new("UIPadding"); tabPadding.PaddingLeft = UDim.new(0,10); tabPadding.PaddingRight = UDim.new(0,10); tabPadding.Parent = tabButton
 		tabs[name] = tabButton
 
-		tabLayoutOrder = tabLayoutOrder + 1 -- KORREKTUR: Zähler erhöhen
+		tabLayoutOrder = tabLayoutOrder + 1
 
 		tabButton.MouseButton1Click:Connect(function()
 			for tabName, otherPage in pairs(pages) do
@@ -534,7 +534,7 @@ function createPlayerEntry(player)
 
 	tabs["Aktionen"].BackgroundColor3 = activeTabColor
 	pages["Aktionen"].Visible = true
-	
+
 	local disclaimerLabel = Instance.new("TextLabel")
 	disclaimerLabel.Name = "Disclaimer"
 	disclaimerLabel.Size = UDim2.new(1, 0, 0, 20)
@@ -568,7 +568,7 @@ function createPlayerEntry(player)
 	sliderActionsLayout.Padding = UDim.new(0, 5)
 	sliderActionsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 	sliderActionsLayout.Parent = sliderActionsFrame
-	
+
     local function createActionButton(name, text, color)
 		local button = Instance.new("TextButton")
 		button.Name = name; button.Text = text; button.TextSize = 14
@@ -582,7 +582,7 @@ function createPlayerEntry(player)
 
 	local function createSliderControl(config)
 		local state = playerFunctionStates[player]
-		
+
 		local frame = Instance.new("Frame")
 		frame.Name = config.name .. "Control"
 		frame.Size = UDim2.new(1, 0, 0, 50)
@@ -608,7 +608,7 @@ function createPlayerEntry(player)
 		valueLabel.TextXAlignment = Enum.TextXAlignment.Right
 		valueLabel.BackgroundTransparency = 1
 		valueLabel.Parent = frame
-        
+
         local toggleButton
         if config.toggleKey then
             toggleButton = Instance.new("TextButton")
@@ -618,7 +618,7 @@ function createPlayerEntry(player)
             toggleButton.Font = Enum.Font.GothamBold
             toggleButton.TextSize = 12
             toggleButton.Parent = title
-            
+
             toggleButton.MouseButton1Click:Connect(function()
                 state[config.toggleKey] = not state[config.toggleKey]
             end)
@@ -654,14 +654,14 @@ function createPlayerEntry(player)
 			sliderProgress.Size = UDim2.new(percentage, 0, 1, 0)
 			valueLabel.Text = string.format(config.format or "%.0f", value)
 		end
-		
+
 		updateSlider(state[config.valueKey])
 
 		knob.InputBegan:Connect(function(input)
 			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
 				local isDragging = true
 				local moveConn, upConn
-				
+
 				moveConn = UserInputService.InputChanged:Connect(function(subInput)
 					if (subInput.UserInputType == Enum.UserInputType.MouseMovement or subInput.UserInputType == Enum.UserInputType.Touch) and isDragging then
 						local newX = subInput.Position.X - sliderTrack.AbsolutePosition.X
@@ -671,7 +671,7 @@ function createPlayerEntry(player)
 						updateSlider(newValue)
 					end
 				end)
-				
+
 				upConn = UserInputService.InputEnded:Connect(function(subInput)
 					if subInput.UserInputType == Enum.UserInputType.MouseButton1 or subInput.UserInputType == Enum.UserInputType.Touch then
 						isDragging = false
@@ -681,7 +681,7 @@ function createPlayerEntry(player)
 				end)
 			end
 		end)
-        
+
         return {frame=frame, toggleButton=toggleButton, title=title}
 	end
 
@@ -709,14 +709,14 @@ function createPlayerEntry(player)
 	local explorerLayout = Instance.new("UIListLayout")
 	explorerLayout.Padding = UDim.new(0, 1)
 	explorerLayout.Parent = explorerFrame
-	
+
 	-- Code Editor/Viewer Inhalt
     local codeViewerFrame = Instance.new("Frame")
     codeViewerFrame.Name = "CodeViewerFrame"
     codeViewerFrame.Size = UDim2.new(1, 0, 0, 300)
     codeViewerFrame.BackgroundTransparency = 1
     codeViewerFrame.Parent = codePage
-    
+
     local codeLayout = Instance.new("UIListLayout")
     codeLayout.Padding = UDim.new(0,10)
     codeLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
@@ -732,7 +732,7 @@ function createPlayerEntry(player)
     downloadButton.TextSize = 16
     downloadButton.Parent = codeViewerFrame
     local dlBtnCorner = Instance.new("UICorner"); dlBtnCorner.Parent = downloadButton
-    
+
     downloadButton.MouseButton1Click:Connect(function()
         copyToClipboard(getScriptSource(), downloadButton)
     end)
@@ -785,20 +785,20 @@ function createPlayerEntry(player)
 		if isExpanded then rebuildExplorer() end
 		detailsContainer.Visible = isExpanded
 	end)
-	
+
 	local function handleCharacter()
 		if player.Character then
 			player.Character.ChildAdded:Connect(function() if uiState[player.Name] then rebuildExplorer() end end)
 			player.Character.ChildRemoved:Connect(function() if uiState[player.Name] then rebuildExplorer() end end)
 		end
 	end
-	
+
 	player.CharacterAdded:Connect(function(character)
 		handleCharacter()
 		if uiState[player.Name] then rebuildExplorer() end
 	end)
 	handleCharacter()
-	
+
 	local espBox = Instance.new("BoxHandleAdornment")
 	espBox.Name = "ESP_Box"
 	espBox.AlwaysOnTop = true
@@ -819,26 +819,26 @@ function createPlayerEntry(player)
 		pcall(function()
 			local char = player.Character
 			local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-			if not humanoid then 
+			if not humanoid then
                 if espBox then espBox.Visible = false end
-                return 
+                return
             end
-			
+
 			if not (state.isFlying and player == localPlayer) then
 				local finalWalkSpeed = state.walkSpeedEnabled and state.walkSpeedValue or 24
 				local finalJumpPower = state.jumpPowerEnabled and state.jumpPowerValue or 50
 				local finalPlatformStand = false
-				
+
 				if state.isFloating then finalPlatformStand = true end
 				if state.isFrozen then finalWalkSpeed, finalJumpPower = 0, 0 end
-				
+
 				humanoid.WalkSpeed = finalWalkSpeed
 				humanoid.JumpPower = finalJumpPower
 				humanoid.PlatformStand = finalPlatformStand
 			end
-			
+
 			if state.isGodmode then humanoid.Health = humanoid.MaxHealth end
-			
+
 			if state.isESP and char:FindFirstChild("HumanoidRootPart") then
 				espBox.Adornee = char.HumanoidRootPart
 				espBox.Visible = true
@@ -859,12 +859,12 @@ function createPlayerEntry(player)
 
 			walkSpeedControl.toggleButton.Text = state.walkSpeedEnabled and "An" or "Aus"; walkSpeedControl.toggleButton.BackgroundColor3 = state.walkSpeedEnabled and Color3.fromRGB(40,200,120) or Color3.fromRGB(100,100,100)
 			jumpPowerControl.toggleButton.Text = state.jumpPowerEnabled and "An" or "Aus"; jumpPowerControl.toggleButton.BackgroundColor3 = state.jumpPowerEnabled and Color3.fromRGB(40,200,120) or Color3.fromRGB(100,100,100)
-            
+
             local jumpDisabled = state.isFlying or state.isFloating
             jumpPowerControl.title.TextColor3 = jumpDisabled and Color3.fromRGB(120,120,120) or Color3.fromRGB(240,240,240)
             jumpPowerControl.toggleButton.BackgroundColor3 = jumpDisabled and Color3.fromRGB(80,80,80) or (state.jumpPowerEnabled and Color3.fromRGB(40,200,120) or Color3.fromRGB(100,100,100))
             jumpPowerControl.toggleButton.AutoButtonColor = not jumpDisabled
-            
+
             flySpeedControl.frame.Visible = state.isFlying
 
 		end)
@@ -894,10 +894,10 @@ local sprintFlySpeed = 250
 RunService.RenderStepped:Connect(function()
 	pcall(function()
 		if not localPlayer or not localPlayer.Character or not playerFunctionStates[localPlayer] then return end
-		
+
 		local state = playerFunctionStates[localPlayer]
 		local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart")
-		
+
 		if not state.isFlying or not hrp then
 			if flyGyro then flyGyro:Destroy(); flyGyro = nil end
 			if flyVelocity then flyVelocity:Destroy(); flyVelocity = nil end
@@ -906,7 +906,7 @@ RunService.RenderStepped:Connect(function()
 
 		local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
 		if not humanoid then return end
-		
+
 		humanoid.PlatformStand = true
 		if not flyGyro then
 			flyGyro = Instance.new("BodyGyro", hrp)
@@ -918,14 +918,14 @@ RunService.RenderStepped:Connect(function()
 			flyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
 			flyVelocity.P = 1250
 		end
-		
+
 		flyGyro.CFrame = workspace.CurrentCamera.CFrame
-		
+
 		local currentFlySpeed = state.flySpeedValue
 		if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
 			currentFlySpeed = currentFlySpeed * 2.5 -- Sprint multiplier
 		end
-		
+
 		local moveVector = Vector3.new()
 		if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVector = moveVector + Vector3.new(0,0,-1) end
 		if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVector = moveVector + Vector3.new(0,0,1) end
@@ -933,7 +933,7 @@ RunService.RenderStepped:Connect(function()
 		if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVector = moveVector + Vector3.new(-1,0,0) end
 		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVector = moveVector + Vector3.new(0,1,0) end
 		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveVector = moveVector + Vector3.new(0,-1,0) end
-		
+
 		flyVelocity.Velocity = moveVector.Magnitude > 0 and (workspace.CurrentCamera.CFrame:VectorToWorldSpace(moveVector.Unit)) * currentFlySpeed or Vector3.new(0,0,0)
 	end)
 end)
