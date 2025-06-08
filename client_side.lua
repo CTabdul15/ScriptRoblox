@@ -1,5 +1,10 @@
+<<<<<<< HEAD
 ﻿-- Dieses LocalScript erstellt eine erweiterte, interaktive und verschiebbare UI.
 -- Es ermöglicht das Erkunden von Spieler-Objekten und das clientseitige Manipulieren von Charakteren.
+=======
+-- Dieses LocalScript erstellt eine erweiterte, interaktive und verschiebbare UI.
+-- Es ermöglicht das Erkunden von Spieler-Objekten, das clientseitige Manipulieren von Charakteren und das Anzeigen/Kopieren des eigenen Quellcodes.
+>>>>>>> 88089024f2dfa5f588365f97b6a7e5e2319fd645
 -- Es enthält auch eine Einstellungs-Registerkarte, um einen Hotkey zum Ein-/Ausblenden der Benutzeroberfläche festzulegen.
 -- Version 25: Schließ-Logik verbessert, Code-Tab entfernt, Explorer-Bearbeitung hinzugefügt.
 --
