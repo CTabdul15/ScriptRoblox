@@ -1,7 +1,7 @@
 ﻿-- Dieses LocalScript erstellt eine erweiterte, interaktive und verschiebbare UI.
--- Es ermöglicht das Erkunden von Spieler-Objekten, das clientseitige Manipulieren von Charakteren und das Anzeigen/Kopieren des eigenen Quellcodes.
+-- Es ermöglicht das Erkunden von Spieler-Objekten und das clientseitige Manipulieren von Charakteren.
 -- Es enthält auch eine Einstellungs-Registerkarte, um einen Hotkey zum Ein-/Ausblenden der Benutzeroberfläche festzulegen.
--- Version 24: Code-Bereinigung zur Behebung von Syntaxfehlern durch unsichtbare Zeichen.
+-- Version 25: Schließ-Logik verbessert, Code-Tab entfernt, Explorer-Bearbeitung hinzugefügt.
 --
 -- #################################################################################################
 -- ## WICHTIGER HINWEIS ZUR FUNKTIONSWEISE:                                                       ##
@@ -11,13 +11,13 @@
 -- #################################################################################################
 --
 
-print("CLIENT: Erweiterter Spieler-Explorer v24 (Code-Bereinigung) gestartet.")
+print("CLIENT: Erweiterter Spieler-Explorer v25 (Überarbeitet) gestartet.")
 
+local flyGyro, flyVelocity
 -- Services
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
-local HttpService = game:GetService("HttpService") -- Nötig für das Anzeigen von Code
 
 -- Lokaler Spieler
 local localPlayer = Players.LocalPlayer
@@ -31,6 +31,9 @@ local playerFunctionStates = {} -- Speichert den Zustand von an/aus Funktionen f
 local toggleUiKey = Enum.KeyCode.RightShift -- Standard-Taste zum Ein-/Ausblenden der UI
 local isBindingKey = false -- Verfolgt, ob wir auf eine Tasteneingabe für das Binding warten
 local keybindButton = nil -- Referenz auf den Keybind-Button
+
+-- Globale Verbindungen zum späteren Trennen
+local globalConnections = {}
 
 -- #################### UI ERSTELLUNG (Basis) ####################
 local screenGui = Instance.new("ScreenGui")
@@ -70,7 +73,7 @@ local title = Instance.new("TextLabel")
 title.Name = "Title"
 title.Size = UDim2.new(1, 0, 0, 30)
 title.BackgroundColor3 = Color3.fromRGB(60, 63, 75)
-title.Text = "  Spieler-Explorer v24"
+title.Text = "  Spieler-Explorer v25"
 title.Font = Enum.Font.GothamBold
 title.TextXAlignment = Enum.TextXAlignment.Left
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -110,43 +113,6 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = closeButton
 
-closeButton.MouseButton1Click:Connect(function() screenGui:Destroy() end)
-
--- Hilfsfunktion für visuelles Feedback bei Klick
-local function giveVisualFeedback(button, color)
-    local originalColor = button.BackgroundColor3
-    button.BackgroundColor3 = color or Color3.fromRGB(60, 180, 120)
-    wait(0.5)
-    button.BackgroundColor3 = originalColor
-end
-
--- Funktion um den Skript-Source zu bekommen
-local function getScriptSource()
-    local source = ""
-    if getscriptsource then
-        source = getscriptsource(script)
-    elseif script and script.Source then
-        source = script.Source
-    else
-        warn("Konnte Skript-Quelle nicht finden.")
-    end
-    return source
-end
-
--- Funktion um Text in die Zwischenablage zu kopieren
-local function copyToClipboard(text, feedbackButton)
-    if setclipboard and text ~= "" then
-        pcall(function()
-            setclipboard(text)
-            if feedbackButton then
-                giveVisualFeedback(feedbackButton)
-            end
-        end)
-    else
-        warn("`setclipboard` ist nicht verfügbar oder die Quelle ist leer.")
-    end
-end
-
 local contentFrame = Instance.new("Frame")
 contentFrame.Name = "ContentFrame"
 contentFrame.Size = UDim2.new(1, 0, 0, 0)
@@ -161,6 +127,57 @@ listLayout.SortOrder = Enum.SortOrder.LayoutOrder
 listLayout.Parent = contentFrame
 
 -- #################### FUNKTIONEN ####################
+
+-- Funktion um alle aktiven Effekte zurückzusetzen und die UI zu zerstören
+-- Funktion um alle aktiven Effekte zurückzusetzen und die UI zu zerstören
+-- Funktion um alle aktiven Effekte zurückzusetzen und die UI zu zerstören
+function cleanupAndDestroy()
+	-- Alle RenderStepped-Verbindungen trennen
+	for player, data in pairs(playerFrames) do
+		if data.Connection then
+			data.Connection:Disconnect()
+		end
+		
+		-- Setze die Humanoid-Eigenschaften für jeden Spieler zurück
+		pcall(function()
+			local char = player.Character
+			local humanoid = char and char:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid.WalkSpeed = 16 -- Standard-Geschwindigkeit
+				humanoid.JumpPower = 50 -- Standard-Sprunghöhe
+				humanoid.PlatformStand = false -- WICHTIG: Deaktiviere Schweben
+                humanoid.MaxHealth = 100 -- Setze MaxHealth zurück
+			end
+		end)
+	end
+
+	-- Globale Verbindungen trennen (inkl. der alten Flug-Logik)
+	for _, conn in ipairs(globalConnections) do
+		conn:Disconnect()
+	end
+	table.clear(globalConnections)
+    
+    -- #################################################
+    -- ## NEUER, WICHTIGER TEIL ZUR FEHLERBEHEBUNG    ##
+    -- #################################################
+    -- Zerstöre die Flug-Objekte explizit, falls sie noch existieren
+    if flyGyro then
+        flyGyro:Destroy()
+        flyGyro = nil
+    end
+    if flyVelocity then
+        flyVelocity:Destroy()
+        flyVelocity = nil
+    end
+    -- #################################################
+
+	-- Zerstöre die UI ganz zum Schluss
+	if screenGui then
+		screenGui:Destroy()
+	end
+end
+
+closeButton.MouseButton1Click:Connect(cleanupAndDestroy)
 
 -- Funktion zum Verschieben des Fensters
 local dragging = false
@@ -177,12 +194,12 @@ title.InputBegan:Connect(function(input)
 		end)
 	end
 end)
-UserInputService.InputChanged:Connect(function(input)
+table.insert(globalConnections, UserInputService.InputChanged:Connect(function(input)
 	if (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) and dragging then
 		local newPos = input.Position - dragStart
 		mainContainer.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + newPos.X, startPos.Y.Scale, startPos.Y.Offset + newPos.Y)
 	end
-end)
+end))
 
 -- Automatische und zuverlässige Aktualisierung der Canvas-Größe
 contentFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
@@ -291,9 +308,14 @@ function createEntry(object, parentUi, indent)
 
 		local copyPathButton = createMenuButton("Pfad kopieren")
 		copyPathButton.MouseButton1Click:Connect(function()
-			setclipboard(object:GetFullName())
-			copyPathButton.Text = "Kopiert!"
-			wait(1)
+            if setclipboard then
+			    setclipboard(object:GetFullName())
+			    copyPathButton.Text = "Kopiert!"
+			    wait(1)
+            else
+                copyPathButton.Text = "Fehler"
+                wait(1)
+            end
 			contextMenu:Destroy()
 		end)
 
@@ -316,9 +338,13 @@ function createEntry(object, parentUi, indent)
 				local function applyChange()
 					pcall(function()
 						local new_val = editBox.Text
-						if tonumber(new_val) and not object:IsA("StringValue") then
-							object.Value = tonumber(new_val)
-						else
+						-- Konvertiere zu passendem Typ
+						if object:IsA("NumberValue") or object:IsA("IntValue") then
+							object.Value = tonumber(new_val) or object.Value
+						elseif object:IsA("BoolValue") then
+							if new_val:lower() == "true" then object.Value = true
+							elseif new_val:lower() == "false" then object.Value = false end
+						else -- StringValue, etc.
 							object.Value = new_val
 						end
 					end)
@@ -327,7 +353,11 @@ function createEntry(object, parentUi, indent)
 				end
 
 				editBox.FocusLost:Connect(function(enterPressed)
-					if enterPressed then applyChange() else editBox:Destroy() end
+					if enterPressed then 
+						applyChange() 
+					else 
+						editBox:Destroy() 
+					end
 				end)
 			end)
 		end
@@ -352,7 +382,7 @@ function createPlayerEntry(player)
 	playerFunctionStates[player] = {
 		isFrozen = false, isFloating = false, isGodmode = false, isESP = false, isFlying = false,
 		walkSpeedEnabled = false, jumpPowerEnabled = false,
-		walkSpeedValue = 24, jumpPowerValue = 50, flySpeedValue = 75
+		walkSpeedValue = 16, jumpPowerValue = 50, flySpeedValue = 75
 	}
 
 	local playerMainFrame = Instance.new("Frame")
@@ -485,7 +515,6 @@ function createPlayerEntry(player)
 	local actionsPage = createTab("Aktionen")
 	local explorerPage = createTab("Explorer")
 	local powerupsPage = createTab("Power-Ups")
-    local codePage = createTab("Code")
 
     -- Einstellungs-Tab (nur für lokalen Spieler)
     if player == localPlayer then
@@ -694,7 +723,7 @@ function createPlayerEntry(player)
 	local flyButton = createActionButton("Fly", "Fly Aus", Color3.fromRGB(100, 100, 255))
     local espButton = createActionButton("ESP", "ESP Aus", Color3.fromRGB(200, 60, 200))
 
-	local walkSpeedControl = createSliderControl({ name = "WalkSpeed", text = "WalkSpeed", color = Color3.fromRGB(80, 220, 120), toggleKey = "walkSpeedEnabled", valueKey = "walkSpeedValue", min = 16, max = 500, default = 24 })
+	local walkSpeedControl = createSliderControl({ name = "WalkSpeed", text = "WalkSpeed", color = Color3.fromRGB(80, 220, 120), toggleKey = "walkSpeedEnabled", valueKey = "walkSpeedValue", min = 16, max = 500, default = 16 })
 	local jumpPowerControl = createSliderControl({ name = "JumpPower", text = "JumpPower", color = Color3.fromRGB(80, 220, 120), toggleKey = "jumpPowerEnabled", valueKey = "jumpPowerValue", min = 50, max = 500, default = 50 })
 	local flySpeedControl = createSliderControl({ name = "FlySpeed", text = "Fly Speed", color = Color3.fromRGB(100, 180, 255), valueKey = "flySpeedValue", min = 25, max = 1000, default = 75 })
     flySpeedControl.frame.Visible = false
@@ -709,57 +738,6 @@ function createPlayerEntry(player)
 	local explorerLayout = Instance.new("UIListLayout")
 	explorerLayout.Padding = UDim.new(0, 1)
 	explorerLayout.Parent = explorerFrame
-
-	-- Code Editor/Viewer Inhalt
-    local codeViewerFrame = Instance.new("Frame")
-    codeViewerFrame.Name = "CodeViewerFrame"
-    codeViewerFrame.Size = UDim2.new(1, 0, 0, 300)
-    codeViewerFrame.BackgroundTransparency = 1
-    codeViewerFrame.Parent = codePage
-
-    local codeLayout = Instance.new("UIListLayout")
-    codeLayout.Padding = UDim.new(0,10)
-    codeLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-    codeLayout.Parent = codeViewerFrame
-
-    local downloadButton = Instance.new("TextButton")
-    downloadButton.Name = "DownloadButton"
-    downloadButton.Size = UDim2.new(1, -20, 0, 35)
-    downloadButton.BackgroundColor3 = Color3.fromRGB(80, 120, 220)
-    downloadButton.Font = Enum.Font.GothamBold
-    downloadButton.Text = "Skript in Zwischenablage kopieren"
-    downloadButton.TextColor3 = Color3.fromRGB(255,255,255)
-    downloadButton.TextSize = 16
-    downloadButton.Parent = codeViewerFrame
-    local dlBtnCorner = Instance.new("UICorner"); dlBtnCorner.Parent = downloadButton
-
-    downloadButton.MouseButton1Click:Connect(function()
-        copyToClipboard(getScriptSource(), downloadButton)
-    end)
-
-    local editorBg = Instance.new("Frame")
-    editorBg.Name = "EditorBackground"
-    editorBg.Size = UDim2.new(1, -20, 1, -55) -- Fills remaining space
-    editorBg.BackgroundColor3 = Color3.fromRGB(10, 12, 18)
-    editorBg.Parent = codeViewerFrame
-    local editorCorner = Instance.new("UICorner"); editorCorner.Parent = editorBg
-    local editorStroke = Instance.new("UIStroke"); editorStroke.Color = Color3.fromRGB(80,80,100); editorStroke.Parent = editorBg
-
-    local codeEditorBox = Instance.new("TextBox")
-    codeEditorBox.Name = "CodeEditor"
-    codeEditorBox.Size = UDim2.new(1, -10, 1, -10)
-    codeEditorBox.Position = UDim2.new(0.5, 0, 0.5, 0)
-    codeEditorBox.AnchorPoint = Vector2.new(0.5, 0.5)
-    codeEditorBox.MultiLine = true
-    codeEditorBox.Text = getScriptSource()
-    codeEditorBox.ClearTextOnFocus = false
-    codeEditorBox.Font = Enum.Font.Code
-    codeEditorBox.TextXAlignment = Enum.TextXAlignment.Left
-    codeEditorBox.TextYAlignment = Enum.TextYAlignment.Top
-    codeEditorBox.TextColor3 = Color3.fromRGB(220, 220, 220)
-    codeEditorBox.BackgroundTransparency = 1
-    codeEditorBox.TextSize = 12
-    codeEditorBox.Parent = editorBg
 
 	local function rebuildExplorer()
 		for _, child in ipairs(explorerFrame:GetChildren()) do
@@ -825,7 +803,7 @@ function createPlayerEntry(player)
             end
 
 			if not (state.isFlying and player == localPlayer) then
-				local finalWalkSpeed = state.walkSpeedEnabled and state.walkSpeedValue or 24
+				local finalWalkSpeed = state.walkSpeedEnabled and state.walkSpeedValue or 16
 				local finalJumpPower = state.jumpPowerEnabled and state.jumpPowerValue or 50
 				local finalPlatformStand = false
 
@@ -833,11 +811,12 @@ function createPlayerEntry(player)
 				if state.isFrozen then finalWalkSpeed, finalJumpPower = 0, 0 end
 
 				humanoid.WalkSpeed = finalWalkSpeed
+				humanoid.UseJumpPower = true
 				humanoid.JumpPower = finalJumpPower
 				humanoid.PlatformStand = finalPlatformStand
 			end
 
-			if state.isGodmode then humanoid.Health = humanoid.MaxHealth end
+			if state.isGodmode then humanoid.MaxHealth = math.huge; humanoid.Health = humanoid.MaxHealth else humanoid.MaxHealth = 100 end
 
 			if state.isESP and char:FindFirstChild("HumanoidRootPart") then
 				espBox.Adornee = char.HumanoidRootPart
@@ -887,11 +866,8 @@ function onPlayerRemoving(player)
 end
 
 -- #################### Globale Logik für LOKALEN Spieler (Fliegen) ####################
-local flyGyro, flyVelocity
-local baseFlySpeed = 75
-local sprintFlySpeed = 250
 
-RunService.RenderStepped:Connect(function()
+table.insert(globalConnections, RunService.RenderStepped:Connect(function()
 	pcall(function()
 		if not localPlayer or not localPlayer.Character or not playerFunctionStates[localPlayer] then return end
 
@@ -936,10 +912,10 @@ RunService.RenderStepped:Connect(function()
 
 		flyVelocity.Velocity = moveVector.Magnitude > 0 and (workspace.CurrentCamera.CFrame:VectorToWorldSpace(moveVector.Unit)) * currentFlySpeed or Vector3.new(0,0,0)
 	end)
-end)
+end))
 
 -- #################### Globale Eingabelogik (Key-Binding & UI Toggle) ####################
-UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
+table.insert(globalConnections, UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
     if isBindingKey then
         if input.UserInputType == Enum.UserInputType.Keyboard then
             toggleUiKey = input.KeyCode
@@ -953,7 +929,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
         if gameProcessedEvent then return end
         mainContainer.Visible = not mainContainer.Visible
     end
-end)
+end))
 
 
 -- #################### INITIALISIERUNG & EVENTS ####################
@@ -961,9 +937,7 @@ for _, player in ipairs(Players:GetPlayers()) do
 	createPlayerEntry(player)
 end
 
-Players.PlayerAdded:Connect(createPlayerEntry)
-Players.PlayerRemoving:Connect(onPlayerRemoving)
+table.insert(globalConnections, Players.PlayerAdded:Connect(createPlayerEntry))
+table.insert(globalConnections, Players.PlayerRemoving:Connect(onPlayerRemoving))
 
-script.Destroying:Connect(function()
-	if screenGui then screenGui:Destroy() end
-end)
+script.Destroying:Connect(cleanupAndDestroy)
