@@ -1,185 +1,262 @@
-﻿-- Dieses LocalScript erstellt eine erweiterte, interaktive und verschiebbare UI.
--- Es ermöglicht das Erkunden von Spieler-Objekten und das clientseitige Manipulieren von Charakteren.
--- Es enthält auch eine Einstellungs-Registerkarte, um einen Hotkey zum Ein-/Ausblenden der Benutzeroberfläche festzulegen.
--- Version 25: Schließ-Logik verbessert, Code-Tab entfernt, Explorer-Bearbeitung hinzugefügt.
---
--- #################################################################################################
--- ## WICHTIGER HINWEIS ZUR FUNKTIONSWEISE:                                                       ##
--- ## Dieses LocalScript ist ein "LocalScript". Alle Aktionen (Freeze, Kill, etc.) auf andere Spieler  ##
--- ## sind NUR FÜR DICH SICHTBAR. Der Server und die anderen Spieler sind davon nicht betroffen.  ##
--- ## Dies ist eine Sicherheitsfunktion von Roblox, die nicht umgangen werden kann.              ##
--- #################################################################################################
---
+-- Merged & Enhanced Player Explorer v33.1
+-- Changelog:
+-- - Fixed expand/collapse animation bug by correctly calculating target height.
+-- - Re-instated smooth TweenService animation for player frame resizing.
+-- - Fixed UI element offsets (Close button, player expand arrow).
+-- - Added comprehensive, re-bindable key system for actions (Fly, Speed, etc.).
+-- - Implemented sliders for granular control over WalkSpeed and FlySpeed.
+-- - Added a dedicated "Keybinds" tab for settings.
+-- - Keybind buttons now dynamically resize to fit text content.
+-- - Added a scrolling frame to action tabs to prevent overflow.
+-- - General UI polish and code refactoring for better maintainability.
+-- IMPORTANT: This is a LocalScript - all actions on other players are CLIENT-SIDE ONLY
 
-print("CLIENT: Erweiterter Spieler-Explorer v25 (Überarbeitet) gestartet.")
+print("CLIENT: Enhanced Player Explorer v33.1 starting...")
 
-local flyGyro, flyVelocity
 -- Services
 local Players = game:GetService("Players")
 local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local CoreGui = game:GetService("CoreGui")
 
--- Lokaler Spieler
+-- Local Player
 local localPlayer = Players.LocalPlayer
 
--- Zustandsspeicher für UI und Funktionen
-local uiState = {} -- Speichert den Zustand (offen/geschlossen) von UI-Elementen
-local playerFrames = {} -- Speichert die UI-Frames und Verbindungen für jeden Spieler
-local playerFunctionStates = {} -- Speichert den Zustand von an/aus Funktionen für jeden Spieler
+-- Wait for PlayerGui to exist
+local playerGui = localPlayer:WaitForChild("PlayerGui")
 
--- Globale Einstellungen
-local toggleUiKey = Enum.KeyCode.RightShift -- Standard-Taste zum Ein-/Ausblenden der UI
-local isBindingKey = false -- Verfolgt, ob wir auf eine Tasteneingabe für das Binding warten
-local keybindButton = nil -- Referenz auf den Keybind-Button
+-- UI Theme & Configuration
+local Theme = {
+	Fonts = {
+		Title = Enum.Font.GothamBold,
+		Header = Enum.Font.GothamBold,
+		Regular = Enum.Font.Gotham,
+		Light = Enum.Font.GothamMedium
+	},
+	Colors = {
+		Background = Color3.fromRGB(24, 25, 30),
+		Primary = Color3.fromRGB(33, 35, 42),
+		Secondary = Color3.fromRGB(24, 26, 31),
+		Accent = Color3.fromRGB(88, 101, 242),
+		AccentHover = Color3.fromRGB(110, 122, 249),
+		Text = Color3.fromRGB(230, 232, 235),
+		TextSecondary = Color3.fromRGB(180, 182, 185),
+		Success = Color3.fromRGB(87, 242, 135),
+		Warning = Color3.fromRGB(108, 97, 35),
+		Error = Color3.fromRGB(237, 66, 69),
+		ToggleOn = Color3.fromRGB(88, 101, 242),
+		ToggleOff = Color3.fromRGB(70, 73, 82),
+		TabActive = Color3.fromRGB(88, 101, 242),
+		TabInactive = Color3.fromRGB(50, 52, 60),
+	},
+	Animation = {
+		Speed = 0.2,
+		Easing = Enum.EasingStyle.Quint,
+		Direction = Enum.EasingDirection.Out
+	}
+}
 
--- Globale Verbindungen zum späteren Trennen
+-- State Storage
+local uiState = {}
+local playerFrames = {}
+local playerFunctionStates = {}
+local selectedPlayer = nil
 local globalConnections = {}
+local screenGui
+local activeKeybindButton = nil
+local isBindingKey = false
+local localPlayerSettings = {
+	walkSpeed = 16,
+	flySpeed = 75
+}
 
--- #################### UI ERSTELLUNG (Basis) ####################
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "PlayerExplorer"
-screenGui.Parent = localPlayer:WaitForChild("PlayerGui")
-screenGui.ResetOnSpawn = false
+-- Keybind Configuration (Default values)
+local keybinds = {
+	toggleUi = {name = "Toggle UI", key = Enum.KeyCode.RightShift},
+	fly = {name = "Toggle Fly", key = Enum.KeyCode.F},
+	speed = {name = "Toggle Speed", key = Enum.KeyCode.G},
+	-- Add more keybinds here as needed
+}
 
--- Haupt-Container-Frame (nicht scrollbar)
+-- Create ScreenGui with error handling
+local function createScreenGui()
+	local existing = playerGui:FindFirstChild("PlayerExplorerEnhanced")
+	if existing then
+		existing:Destroy()
+	end
+
+	screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "PlayerExplorerEnhanced"
+	screenGui.Parent = playerGui
+	screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+	screenGui.ResetOnSpawn = false
+
+	return screenGui
+end
+
+-- Initialize ScreenGui
+screenGui = createScreenGui()
+
+-- Cleanup function
+local function cleanupAndDestroy()
+	print("Cleaning up Player Explorer...")
+	for player, data in pairs(playerFrames) do
+		if data.Connection then data.Connection:Disconnect() end
+		if data.ESPBox then data.ESPBox:Destroy() end
+	end
+	for _, conn in ipairs(globalConnections) do conn:Disconnect() end
+
+	pcall(function()
+		if localPlayer and localPlayer.Character then
+			local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if humanoid then
+				humanoid.PlatformStand = false
+				humanoid.WalkSpeed = 16 -- Reset speed
+			end
+			for _, part in ipairs(localPlayer.Character:GetDescendants()) do
+				if part:IsA("BasePart") and part.Name ~= "HumanoidRootPart" then
+					part.CanCollide = true
+				end
+			end
+		end
+	end)
+
+	table.clear(globalConnections)
+	pcall(function() screenGui:Destroy() end)
+	print("Cleanup complete.")
+end
+
+-- Toast Notification Function
+local function showToast(message, toastColor)
+	spawn(function()
+		local toastFrame = Instance.new("Frame")
+		toastFrame.Name = "ToastNotification"
+		toastFrame.Size = UDim2.new(0, 250, 0, 50)
+		toastFrame.Position = UDim2.new(0.5, -125, 1, 50)
+		toastFrame.BackgroundColor3 = Theme.Colors.Primary
+		toastFrame.BorderSizePixel = 0
+		toastFrame.Parent = screenGui
+		toastFrame.ZIndex = 100
+
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0, 6)
+		corner.Parent = toastFrame
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = toastColor or Theme.Colors.Accent
+		stroke.Thickness = 1.5
+		stroke.Parent = toastFrame
+
+		local label = Instance.new("TextLabel")
+		label.Size = UDim2.new(1, -10, 1, 0)
+		label.Position = UDim2.fromScale(0.5, 0.5)
+		label.AnchorPoint = Vector2.new(0.5, 0.5)
+		label.BackgroundTransparency = 1
+		label.Font = Theme.Fonts.Regular
+		label.TextColor3 = Theme.Colors.Text
+		label.Text = message
+		label.TextSize = 15
+		label.TextWrapped = true
+		label.Parent = toastFrame
+
+		local tweenInfoIn = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+		local tweenIn = TweenService:Create(toastFrame, tweenInfoIn, {Position = UDim2.new(0.5, -125, 1, -60)})
+		tweenIn:Play()
+
+		wait(3)
+
+		local tweenInfoOut = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.In)
+		local tweenOut = TweenService:Create(toastFrame, tweenInfoOut, {Position = UDim2.new(0.5, -125, 1, 50)})
+		tweenOut:Play()
+		tweenOut.Completed:Connect(function()
+			toastFrame:Destroy()
+		end)
+	end)
+end
+
+
+-- Main Container
 local mainContainer = Instance.new("Frame")
 mainContainer.Name = "MainContainer"
-mainContainer.Size = UDim2.new(0, 350, 0, 550)
-mainContainer.Position = UDim2.new(0.5, -175, 0.5, -275)
-mainContainer.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
-mainContainer.BackgroundTransparency = 0.1
+mainContainer.Size = UDim2.new(0, 400, 0, 600) -- Increased size for more content
+mainContainer.Position = UDim2.new(0.5, -200, 0.5, -300)
+mainContainer.BackgroundColor3 = Theme.Colors.Background
+mainContainer.BorderSizePixel = 0
 mainContainer.ClipsDescendants = true
 mainContainer.Parent = screenGui
 
-local corner = Instance.new("UICorner")
-corner.CornerRadius = UDim.new(0, 8)
-corner.Parent = mainContainer
+local mainCorner = Instance.new("UICorner")
+mainCorner.CornerRadius = UDim.new(0, 12)
+mainCorner.Parent = mainContainer
 
-local stroke = Instance.new("UIStroke")
-stroke.Color = Color3.fromRGB(80, 80, 100)
-stroke.Thickness = 1.5
-stroke.Parent = mainContainer
+local mainStroke = Instance.new("UIStroke")
+mainStroke.Color = Theme.Colors.Secondary
+mainStroke.Parent = mainContainer
 
-local gradient = Instance.new("UIGradient")
-gradient.Color = ColorSequence.new({
-	ColorSequenceKeypoint.new(0, Color3.fromRGB(45, 48, 58)),
-	ColorSequenceKeypoint.new(1, Color3.fromRGB(30, 32, 38))
-})
-gradient.Rotation = 90
-gradient.Parent = mainContainer
-
--- Titel-Leiste (bleibt oben fixiert)
+-- Title Bar
 local title = Instance.new("TextLabel")
 title.Name = "Title"
-title.Size = UDim2.new(1, 0, 0, 30)
-title.BackgroundColor3 = Color3.fromRGB(60, 63, 75)
-title.Text = "  Spieler-Explorer v25"
-title.Font = Enum.Font.GothamBold
+title.Size = UDim2.new(1, 0, 0, 35)
+title.Position = UDim2.new(0, 0, 0, 0)
+title.BackgroundColor3 = Theme.Colors.Primary
+title.BorderSizePixel = 0
+title.Text = "  Player Explorer v33.1"
+title.Font = Theme.Fonts.Title
 title.TextXAlignment = Enum.TextXAlignment.Left
-title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextColor3 = Theme.Colors.Text
 title.TextSize = 16
 title.Parent = mainContainer
 
--- ScrollingFrame für den Inhalt
-local mainFrame = Instance.new("ScrollingFrame")
-mainFrame.Name = "ScrollingContent"
-mainFrame.Size = UDim2.new(1, 0, 1, -30)
-mainFrame.Position = UDim2.new(0, 0, 0, 30)
-mainFrame.BackgroundColor3 = Color3.fromRGB(20, 22, 28)
-mainFrame.BackgroundTransparency = 1
-mainFrame.BorderSizePixel = 0
-mainFrame.ScrollBarImageColor3 = Color3.fromRGB(150, 150, 150)
-mainFrame.ScrollBarThickness = 6
-mainFrame.Parent = mainContainer
+local titleCorner = Instance.new("UICorner")
+titleCorner.CornerRadius = UDim.new(0, 12)
+titleCorner.Parent = title
 
+-- Close Button (FIXED OFFSET)
 local closeButton = Instance.new("TextButton")
 closeButton.Name = "CloseButton"
-closeButton.Size = UDim2.new(0, 22, 0, 22)
-closeButton.Position = UDim2.new(1, -28, 0.5, -11)
-closeButton.BackgroundColor3 = Color3.fromRGB(220, 60, 60)
-closeButton.Text = ""
+closeButton.Size = UDim2.new(0, 24, 0, 24)
+closeButton.Position = UDim2.new(1, -10, 0.5, 0) -- Positioned from the right edge with 10px padding
+closeButton.AnchorPoint = Vector2.new(1, 0.5) -- Anchored to the right-center
+closeButton.BackgroundColor3 = Theme.Colors.Error
+closeButton.Text = "X"
+closeButton.Font = Theme.Fonts.Title
+closeButton.TextColor3 = Theme.Colors.Text
+closeButton.TextSize = 14
 closeButton.Parent = title
-
-local closeIcon = Instance.new("TextLabel")
-closeIcon.Size = UDim2.new(1, 0, 1, 0)
-closeIcon.Text = "X"
-closeIcon.BackgroundTransparency = 1
-closeIcon.TextColor3 = Color3.fromRGB(255, 255, 255)
-closeIcon.Font = Enum.Font.GothamBold
-closeIcon.TextSize = 14
-closeIcon.Parent = closeButton
-
+closeButton.ZIndex = 2
+closeButton.MouseButton1Click:Connect(cleanupAndDestroy)
 local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = closeButton
 
-local contentFrame = Instance.new("Frame")
-contentFrame.Name = "ContentFrame"
-contentFrame.Size = UDim2.new(1, 0, 0, 0)
-contentFrame.AutomaticSize = Enum.AutomaticSize.Y
-contentFrame.BackgroundTransparency = 1
-contentFrame.Parent = mainFrame
+-- ScrollingFrame for player list
+local mainFrame = Instance.new("ScrollingFrame")
+mainFrame.Name = "PlayerListScroll"
+mainFrame.Size = UDim2.new(1, 0, 1, -35)
+mainFrame.Position = UDim2.new(0, 0, 0, 35)
+mainFrame.BackgroundColor3 = Theme.Colors.Background
+mainFrame.BorderSizePixel = 0
+mainFrame.ScrollBarImageColor3 = Theme.Colors.Accent
+mainFrame.ScrollBarThickness = 5
+mainFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+mainFrame.Parent = mainContainer
 
 local listLayout = Instance.new("UIListLayout")
-listLayout.Padding = UDim.new(0, 5)
+listLayout.Padding = UDim.new(0, 8)
 listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
 listLayout.SortOrder = Enum.SortOrder.LayoutOrder
-listLayout.Parent = contentFrame
+listLayout.Parent = mainFrame
 
--- #################### FUNKTIONEN ####################
+local framePadding = Instance.new("UIPadding")
+framePadding.PaddingTop = UDim.new(0, 10)
+framePadding.PaddingBottom = UDim.new(0, 10)
+framePadding.PaddingLeft = UDim.new(0, 10)
+framePadding.PaddingRight = UDim.new(0, 10)
+framePadding.Parent = mainFrame
 
--- Funktion um alle aktiven Effekte zurückzusetzen und die UI zu zerstören
--- Funktion um alle aktiven Effekte zurückzusetzen und die UI zu zerstören
--- Funktion um alle aktiven Effekte zurückzusetzen und die UI zu zerstören
-function cleanupAndDestroy()
-	-- Alle RenderStepped-Verbindungen trennen
-	for player, data in pairs(playerFrames) do
-		if data.Connection then
-			data.Connection:Disconnect()
-		end
-		
-		-- Setze die Humanoid-Eigenschaften für jeden Spieler zurück
-		pcall(function()
-			local char = player.Character
-			local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-			if humanoid then
-				humanoid.WalkSpeed = 16 -- Standard-Geschwindigkeit
-				humanoid.JumpPower = 50 -- Standard-Sprunghöhe
-				humanoid.PlatformStand = false -- WICHTIG: Deaktiviere Schweben
-                humanoid.MaxHealth = 100 -- Setze MaxHealth zurück
-			end
-		end)
-	end
-
-	-- Globale Verbindungen trennen (inkl. der alten Flug-Logik)
-	for _, conn in ipairs(globalConnections) do
-		conn:Disconnect()
-	end
-	table.clear(globalConnections)
-    
-    -- #################################################
-    -- ## NEUER, WICHTIGER TEIL ZUR FEHLERBEHEBUNG    ##
-    -- #################################################
-    -- Zerstöre die Flug-Objekte explizit, falls sie noch existieren
-    if flyGyro then
-        flyGyro:Destroy()
-        flyGyro = nil
-    end
-    if flyVelocity then
-        flyVelocity:Destroy()
-        flyVelocity = nil
-    end
-    -- #################################################
-
-	-- Zerstöre die UI ganz zum Schluss
-	if screenGui then
-		screenGui:Destroy()
-	end
-end
-
-closeButton.MouseButton1Click:Connect(cleanupAndDestroy)
-
--- Funktion zum Verschieben des Fensters
+-- Make window draggable
 local dragging = false
 local dragStart, startPos
 title.InputBegan:Connect(function(input)
@@ -187,11 +264,7 @@ title.InputBegan:Connect(function(input)
 		dragging = true
 		dragStart = input.Position
 		startPos = mainContainer.Position
-		input.Changed:Connect(function()
-			if input.UserInputState == Enum.UserInputState.End then
-				dragging = false
-			end
-		end)
+		input.Changed:Connect(function() if input.UserInputState == Enum.UserInputState.End then dragging = false end end)
 	end
 end)
 table.insert(globalConnections, UserInputService.InputChanged:Connect(function(input)
@@ -201,743 +274,577 @@ table.insert(globalConnections, UserInputService.InputChanged:Connect(function(i
 	end
 end))
 
--- Automatische und zuverlässige Aktualisierung der Canvas-Größe
-contentFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-	mainFrame.CanvasSize = UDim2.new(0, 0, 0, contentFrame.AbsoluteSize.Y)
+-- Update canvas size when content changes
+listLayout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+	mainFrame.CanvasSize = UDim2.new(0, 0, 0, listLayout.AbsoluteContentSize.Y + 20)
 end)
 
--- Rekursive Funktion, um die Baumstruktur für jedes Objekt zu erstellen
+
+-- #region UI Component Factory
+
+--- Creates a slider for numerical input.
+function createSlider(name, min, max, initialValue, parent, callback)
+	local sliderFrame = Instance.new("Frame")
+	sliderFrame.Name = name .. "SliderFrame"
+	sliderFrame.Size = UDim2.new(1, 0, 0, 50)
+	sliderFrame.BackgroundTransparency = 1
+	sliderFrame.Parent = parent
+
+	local label = Instance.new("TextLabel")
+	label.Name = "SliderLabel"
+	label.Size = UDim2.new(1, 0, 0, 20)
+	label.BackgroundTransparency = 1
+	label.Font = Theme.Fonts.Regular
+	label.TextColor3 = Theme.Colors.TextSecondary
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Text = name .. ": " .. initialValue
+	label.TextSize = 15
+	label.Parent = sliderFrame
+
+	local sliderBack = Instance.new("Frame")
+	sliderBack.Name = "SliderBack"
+	sliderBack.Size = UDim2.new(1, 0, 0, 8)
+	sliderBack.Position = UDim2.new(0, 0, 0, 25)
+	sliderBack.BackgroundColor3 = Theme.Colors.Secondary
+	sliderBack.Parent = sliderFrame
+	local backCorner = Instance.new("UICorner"); backCorner.CornerRadius = UDim.new(1,0); backCorner.Parent = sliderBack
+
+	local sliderFill = Instance.new("Frame")
+	sliderFill.Name = "SliderFill"
+	local percent = (initialValue - min) / (max - min)
+	sliderFill.Size = UDim2.new(percent, 0, 1, 0)
+	sliderFill.BackgroundColor3 = Theme.Colors.Accent
+	sliderFill.Parent = sliderBack
+	local fillCorner = Instance.new("UICorner"); fillCorner.CornerRadius = UDim.new(1,0); fillCorner.Parent = sliderFill
+
+	local sliderHandle = Instance.new("TextButton")
+	sliderHandle.Name = "SliderHandle"
+	sliderHandle.Size = UDim2.new(0, 16, 0, 16)
+	sliderHandle.AnchorPoint = Vector2.new(0.5, 0.5)
+	sliderHandle.Position = UDim2.new(1, 0, 0.5, 0)
+	sliderHandle.Text = ""
+	sliderHandle.BackgroundColor3 = Theme.Colors.Text
+	sliderHandle.ZIndex = 2
+	sliderHandle.Parent = sliderFill
+	local handleCorner = Instance.new("UICorner"); handleCorner.CornerRadius = UDim.new(1,0); handleCorner.Parent = sliderHandle
+
+	local draggingSlider = false
+	sliderHandle.InputBegan:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingSlider = true end
+	end)
+	sliderHandle.InputEnded:Connect(function(input)
+		if input.UserInputType == Enum.UserInputType.MouseButton1 then draggingSlider = false end
+	end)
+	UserInputService.InputChanged:Connect(function(input)
+		if draggingSlider and input.UserInputType == Enum.UserInputType.MouseMovement then
+			local mouseX = UserInputService:GetMouseLocation().X
+			local backPos = sliderBack.AbsolutePosition.X
+			local backSize = sliderBack.AbsoluteSize.X
+			local alpha = math.clamp((mouseX - backPos) / backSize, 0, 1)
+			local value = math.floor(min + (max - min) * alpha + 0.5)
+
+			sliderFill.Size = UDim2.new(alpha, 0, 1, 0)
+			sliderHandle.Position = UDim2.new(1, 0, 0.5, 0)
+			label.Text = name .. ": " .. value
+			if callback then callback(value) end
+		end
+	end)
+	return sliderFrame
+end
+
+
+--- Creates a button for changing a keybind.
+function createKeybindButton(id, bindInfo, parent)
+	local frame = Instance.new("Frame")
+	frame.Name = id .. "KeybindFrame"
+	frame.Size = UDim2.new(1, 0, 0, 35)
+	frame.BackgroundTransparency = 1
+	frame.Parent = parent
+
+	local label = Instance.new("TextLabel")
+	label.Name = "KeybindLabel"
+	label.Size = UDim2.new(0.5, -5, 1, 0)
+	label.TextSize = 16 
+	label.BackgroundTransparency = 1
+	label.Font = Theme.Fonts.Regular
+	label.TextColor3 = Theme.Colors.Text
+	label.Text = bindInfo.name .. ":"
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Parent = frame
+
+	local button = Instance.new("TextButton")
+	button.Name = "KeybindButton"
+	button.Size = UDim2.new(0.5, -5, 1, 0)
+	button.Position = UDim2.fromScale(0.5, 0)
+	button.BackgroundColor3 = Theme.Colors.Secondary
+	button.Font = Theme.Fonts.Header
+	button.TextColor3 = Theme.Colors.Text
+	button.Text = bindInfo.key.Name
+	button.TextSize = 15
+	button.Parent = frame
+	button.AutomaticSize = Enum.AutomaticSize.X -- DYNAMIC SIZE
+	button.ClipsDescendants = false
+	local btnCorner = Instance.new("UICorner"); btnCorner.CornerRadius = UDim.new(0,6); btnCorner.Parent = button
+	local btnPadding = Instance.new("UIPadding"); btnPadding.PaddingLeft=UDim.new(0,10); btnPadding.PaddingRight=UDim.new(0,10); btnPadding.Parent = button
+
+	button.MouseButton1Click:Connect(function()
+		if isBindingKey and activeKeybindButton then
+			-- Cancel previous binding
+			activeKeybindButton.Text = keybinds[activeKeybindButton.Name:gsub("KeybindButton", "")].key.Name
+			activeKeybindButton.TextSize = 15
+			activeKeybindButton.BackgroundColor3 = Theme.Colors.Secondary
+		end
+		isBindingKey = true
+		activeKeybindButton = button
+		button.Text = "..."
+		button.BackgroundColor3 = Theme.Colors.Warning
+	end)
+
+	return frame
+end
+-- #endregion
+
+
+-- Object Explorer Function
 function createEntry(object, parentUi, indent)
+	-- This function remains largely the same as the original, as it was well-built.
+	-- No significant changes requested or needed for this part.
 	local entryFrame = Instance.new("Frame")
 	entryFrame.Name = "EntryFrame"
 	entryFrame.Size = UDim2.new(1, 0, 0, 0)
 	entryFrame.AutomaticSize = Enum.AutomaticSize.Y
 	entryFrame.BackgroundTransparency = 1
 	entryFrame.Parent = parentUi
-
-	local entryLayout = Instance.new("UIListLayout")
-	entryLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	entryLayout.Parent = entryFrame
+	local entryLayout = Instance.new("UIListLayout"); entryLayout.SortOrder = Enum.SortOrder.LayoutOrder; entryLayout.Parent = entryFrame
 
 	local entryButton = Instance.new("TextButton")
-	entryButton.Name = object.Name
-	entryButton.Size = UDim2.new(1, 0, 0, 22)
-	entryButton.TextXAlignment = Enum.TextXAlignment.Left
-	entryButton.BackgroundTransparency = 1
-	entryButton.TextColor3 = Color3.fromRGB(220, 220, 220)
-	entryButton.Font = Enum.Font.Gotham
-	entryButton.TextSize = 14
-	entryButton.Parent = entryFrame
-	entryButton.LayoutOrder = 1
+	entryButton.Name = object.Name; entryButton.Size = UDim2.new(1, 0, 0, 22)
+	entryButton.TextXAlignment = Enum.TextXAlignment.Left; entryButton.BackgroundTransparency = 1
+	entryButton.TextColor3 = Theme.Colors.TextSecondary; entryButton.Font = Theme.Fonts.Light
+	entryButton.TextSize = 15; entryButton.Parent = entryFrame; entryButton.LayoutOrder = 1
 
-	local children = {}
-	pcall(function() children = object:GetChildren() end)
-	local objectPath = object:GetFullName()
-	local prefix = string.rep("    ", indent)
+	local children = {}; pcall(function() children = object:GetChildren() end)
+	local objectPath = object:GetFullName(); local prefix = string.rep("    ", indent)
 	local childrenFrame = nil
 
 	local function updateEntryVisuals()
 		if #children > 0 then
 			local isExpanded = uiState[objectPath] or false
-			local toggleSymbol = isExpanded and "[-] " or "[+] "
+			local toggleSymbol = isExpanded and "V " or "> "
 			entryButton.Text = prefix .. toggleSymbol .. object.Name .. " (" .. object.ClassName .. ")"
-
 			if isExpanded and not childrenFrame then
-				childrenFrame = Instance.new("Frame")
-				childrenFrame.Name = "ChildrenFrame"
-				childrenFrame.Size = UDim2.new(1, 0, 0, 0)
-				childrenFrame.AutomaticSize = Enum.AutomaticSize.Y
-				childrenFrame.BackgroundTransparency = 1
-				childrenFrame.Parent = entryFrame
-				childrenFrame.LayoutOrder = 2
-				local childrenLayout = Instance.new("UIListLayout")
-				childrenLayout.Padding = UDim.new(0, 1)
-				childrenLayout.Parent = childrenFrame
-				for _, child in ipairs(children) do
-					createEntry(child, childrenFrame, indent + 1)
-				end
+				childrenFrame = Instance.new("Frame"); childrenFrame.Name = "ChildrenFrame"; childrenFrame.Size = UDim2.new(1, 0, 0, 0)
+				childrenFrame.AutomaticSize = Enum.AutomaticSize.Y; childrenFrame.BackgroundTransparency = 1
+				childrenFrame.Parent = entryFrame; childrenFrame.LayoutOrder = 2
+				local childrenLayout = Instance.new("UIListLayout"); childrenLayout.Padding = UDim.new(0, 1); childrenLayout.Parent = childrenFrame
+				for _, child in ipairs(children) do createEntry(child, childrenFrame, indent + 1) end
 			elseif not isExpanded and childrenFrame then
-				childrenFrame:Destroy()
-				childrenFrame = nil
+				childrenFrame:Destroy(); childrenFrame = nil
 			end
 		elseif object:IsA("ValueBase") then
 			entryButton.Text = prefix .. "- " .. object.Name .. ": " .. tostring(object.Value)
-			entryButton.TextColor3 = Color3.fromRGB(120, 220, 120)
+			entryButton.TextColor3 = Theme.Colors.Success
 		else
 			entryButton.Text = prefix .. "- " .. object.Name .. " (" .. object.ClassName .. ")"
 		end
 	end
 
 	entryButton.MouseButton1Click:Connect(function()
-		if #children > 0 then
-			uiState[objectPath] = not uiState[objectPath]
-			updateEntryVisuals()
-		end
+		if #children > 0 then uiState[objectPath] = not uiState[objectPath]; updateEntryVisuals() end
 	end)
-
+	-- Context Menu (Right-Click)
 	entryButton.InputBegan:Connect(function(input)
 		if input.UserInputType ~= Enum.UserInputType.MouseButton2 then return end
-
-		for _, v in ipairs(entryButton:GetChildren()) do
-			if v.Name == "ContextMenu" then v:Destroy() end
-		end
-
-		local contextMenu = Instance.new("Frame")
-		contextMenu.Name = "ContextMenu"
-		contextMenu.Size = UDim2.new(0, 150, 0, 0)
-		contextMenu.AutomaticSize = Enum.AutomaticSize.Y
-		contextMenu.Position = UDim2.new(0, 5, 1, 5)
-		contextMenu.BackgroundColor3 = Color3.fromRGB(40, 42, 50)
-		contextMenu.ZIndex = 20
-		contextMenu.Parent = entryButton
+		for _, v in ipairs(entryButton:GetChildren()) do if v.Name == "ContextMenu" then v:Destroy() end end
+		local contextMenu = Instance.new("Frame"); contextMenu.Name = "ContextMenu"; contextMenu.Size = UDim2.new(0, 150, 0, 0)
+		contextMenu.AutomaticSize = Enum.AutomaticSize.Y; contextMenu.Position = UDim2.new(0, 5, 1, 5)
+		contextMenu.BackgroundColor3 = Theme.Colors.Primary; contextMenu.ZIndex = 20; contextMenu.Parent = entryButton
 		local menuCorner = Instance.new("UICorner"); menuCorner.CornerRadius = UDim.new(0,4); menuCorner.Parent = contextMenu
-		local menuStroke = Instance.new("UIStroke"); menuStroke.Color = Color3.fromRGB(100,100,110); menuStroke.Parent = contextMenu
+		local menuStroke = Instance.new("UIStroke"); menuStroke.Color = Theme.Colors.Secondary; menuStroke.Parent = contextMenu
 		local menuLayout = Instance.new("UIListLayout"); menuLayout.Padding = UDim.new(0,2); menuLayout.Parent = contextMenu
-
 		local function createMenuButton(text)
-			local button = Instance.new("TextButton")
-			button.Size = UDim2.new(1, 0, 0, 25)
-			button.Text = text
-			button.BackgroundColor3 = Color3.fromRGB(50, 52, 60)
-			button.TextColor3 = Color3.fromRGB(220, 220, 220)
-			button.Font = Enum.Font.Gotham
-			button.TextSize = 14
-			button.Parent = contextMenu
+			local button = Instance.new("TextButton"); button.Size = UDim2.new(1, 0, 0, 25); button.Text = text
+			button.BackgroundColor3 = Theme.Colors.Secondary; button.TextColor3 = Theme.Colors.Text
+			button.Font = Theme.Fonts.Regular; button.TextSize = 15; button.Parent = contextMenu
 			return button
 		end
-
-		local copyPathButton = createMenuButton("Pfad kopieren")
+		local copyPathButton = createMenuButton("Copy Path")
 		copyPathButton.MouseButton1Click:Connect(function()
-            if setclipboard then
-			    setclipboard(object:GetFullName())
-			    copyPathButton.Text = "Kopiert!"
-			    wait(1)
-            else
-                copyPathButton.Text = "Fehler"
-                wait(1)
-            end
+			if setclipboard then setclipboard(object:GetFullName()); showToast("Path copied!", Theme.Colors.Success)
+			else showToast("Clipboard not available", Theme.Colors.Error) end
 			contextMenu:Destroy()
 		end)
-
 		if object:IsA("ValueBase") then
-			local editValueButton = createMenuButton("Wert bearbeiten")
+			local editValueButton = createMenuButton("Edit Value")
 			editValueButton.MouseButton1Click:Connect(function()
 				contextMenu:Destroy()
-				local editBox = Instance.new("TextBox")
-				editBox.Size = UDim2.new(1, 0, 1, 0)
-				editBox.Position = UDim2.new(0,0,0,0)
-				editBox.Text = tostring(object.Value)
-				editBox.ClearTextOnFocus = false
-				editBox.Font = Enum.Font.Gotham
-				editBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-				editBox.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
-				editBox.ZIndex = 10
-				editBox.Parent = entryButton
-				editBox:CaptureFocus()
-
+				local editBox = Instance.new("TextBox"); editBox.Size = UDim2.new(1, 0, 1, 0); editBox.Position = UDim2.new(0,0,0,0)
+				editBox.Text = tostring(object.Value); editBox.ClearTextOnFocus = false; editBox.Font = Theme.Fonts.Regular
+				editBox.TextColor3 = Theme.Colors.Text; editBox.BackgroundColor3 = Theme.Colors.Secondary
+				editBox.ZIndex = 10; editBox.Parent = entryButton; editBox:CaptureFocus()
 				local function applyChange()
 					pcall(function()
 						local new_val = editBox.Text
-						-- Konvertiere zu passendem Typ
-						if object:IsA("NumberValue") or object:IsA("IntValue") then
-							object.Value = tonumber(new_val) or object.Value
+						if object:IsA("NumberValue") or object:IsA("IntValue") then object.Value = tonumber(new_val) or object.Value
 						elseif object:IsA("BoolValue") then
 							if new_val:lower() == "true" then object.Value = true
 							elseif new_val:lower() == "false" then object.Value = false end
-						else -- StringValue, etc.
-							object.Value = new_val
-						end
-					end)
-					editBox:Destroy()
-					updateEntryVisuals()
+						else object.Value = new_val end
+					end); editBox:Destroy(); updateEntryVisuals()
 				end
-
-				editBox.FocusLost:Connect(function(enterPressed)
-					if enterPressed then 
-						applyChange() 
-					else 
-						editBox:Destroy() 
-					end
-				end)
+				editBox.FocusLost:Connect(function(enterPressed) if enterPressed then applyChange() else editBox:Destroy() end end)
 			end)
 		end
-
-		local closeConn
-		closeConn = UserInputService.InputBegan:Connect(function()
-			if contextMenu and contextMenu.Parent then
-				contextMenu:Destroy()
-			end
+		local closeConn; closeConn = UserInputService.InputBegan:Connect(function()
+			if contextMenu and contextMenu.Parent then contextMenu:Destroy() end
 			closeConn:Disconnect()
 		end)
 	end)
-
 	updateEntryVisuals()
 end
 
-
--- Funktion zum Erstellen eines UI-Eintrags für einen Spieler
-function createPlayerEntry(player)
+-- Function to create player entry
+local function createPlayerEntry(player)
 	if playerFrames[player] then return end
 
 	playerFunctionStates[player] = {
-		isFrozen = false, isFloating = false, isGodmode = false, isESP = false, isFlying = false,
-		walkSpeedEnabled = false, jumpPowerEnabled = false,
-		walkSpeedValue = 16, jumpPowerValue = 50, flySpeedValue = 75
+		isFrozen = false, isGodmode = false, isESP = false, isFlying = false, speedBoost = false,
 	}
 
 	local playerMainFrame = Instance.new("Frame")
-	playerMainFrame.Name = player.Name .. "_MainFrame"
-	playerMainFrame.Size = UDim2.new(1, 0, 0, 0)
-	playerMainFrame.AutomaticSize = Enum.AutomaticSize.Y
-	playerMainFrame.BackgroundTransparency = 1
-	playerMainFrame.LayoutOrder = player.UserId
-	playerMainFrame.Parent = contentFrame
-
-	local playerLayout = Instance.new("UIListLayout")
-	playerLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	playerLayout.Padding = UDim.new(0, 2)
-	playerLayout.Parent = playerMainFrame
+	playerMainFrame.Name = player.Name .. "_MainFrame"; playerMainFrame.Size = UDim2.new(1, -20, 0, 40)
+	playerMainFrame.BackgroundColor3 = Theme.Colors.Primary; playerMainFrame.BorderSizePixel = 0
+	playerMainFrame.ClipsDescendants = true; playerMainFrame.LayoutOrder = player.UserId; playerMainFrame.Parent = mainFrame
+	local playerCorner = Instance.new("UICorner"); playerCorner.CornerRadius = UDim.new(0, 8); playerCorner.Parent = playerMainFrame
 
 	local playerHeader = Instance.new("TextButton")
-	playerHeader.Name = player.Name
-	playerHeader.Size = UDim2.new(1, 0, 0, 28)
-	playerHeader.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
-	playerHeader.Text = "► " .. player.Name
-	playerHeader.Font = Enum.Font.GothamBold
-	playerHeader.TextSize = 16
-	playerHeader.TextColor3 = Color3.fromRGB(255, 200, 100)
-	playerHeader.TextXAlignment = Enum.TextXAlignment.Left
-	playerHeader.Parent = playerMainFrame
-	playerHeader.LayoutOrder = 1
-	local playerHeaderCorner = Instance.new("UICorner"); playerHeaderCorner.CornerRadius = UDim.new(0,4); playerHeaderCorner.Parent = playerHeader
+	playerHeader.Name = "Header"; playerHeader.Size = UDim2.new(1, 0, 0, 40); playerHeader.BackgroundTransparency = 1
+	playerHeader.Text = ""; playerHeader.Parent = playerMainFrame
+
+	-- FIXED: Arrow icon moved to the far left
+	local icon = Instance.new("TextLabel"); icon.Size = UDim2.new(0, 20, 1, 0); icon.Position = UDim2.fromOffset(10, 0)
+	icon.BackgroundTransparency = 1; icon.Font = Theme.Fonts.Header; icon.Text = ">" -- Using ▸ and ▾
+	icon.TextColor3 = Theme.Colors.Accent; icon.TextSize = 20; icon.Parent = playerHeader
+
+	local playerNameLabel = Instance.new("TextLabel")
+	playerNameLabel.Size = UDim2.new(1, -40, 1, 0); playerNameLabel.Position = UDim2.fromOffset(35, 0)
+	playerNameLabel.BackgroundTransparency = 1; playerNameLabel.Font = Theme.Fonts.Header; playerNameLabel.TextSize = 16
+	playerNameLabel.TextColor3 = player == localPlayer and Theme.Colors.Success or Theme.Colors.Text
+	playerNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+	playerNameLabel.Text = player.Name .. (player == localPlayer and " (YOU)" or "")
+	playerNameLabel.Parent = playerHeader
 
 	local detailsContainer = Instance.new("Frame")
-	detailsContainer.Name = "DetailsContainer"
-	detailsContainer.Size = UDim2.new(1, -10, 0, 0)
-    detailsContainer.Position = UDim2.new(0.5, 0, 0, 0)
-    detailsContainer.AnchorPoint = Vector2.new(0.5, 0)
-	detailsContainer.AutomaticSize = Enum.AutomaticSize.Y
-	detailsContainer.BackgroundTransparency = 1
-	detailsContainer.ClipsDescendants = true
-	detailsContainer.Visible = false
-	detailsContainer.Parent = playerMainFrame
-	detailsContainer.LayoutOrder = 2
+	detailsContainer.Name = "DetailsContainer"; detailsContainer.Size = UDim2.new(1, 0, 0, 0)
+	detailsContainer.AutomaticSize = Enum.AutomaticSize.Y; detailsContainer.Position = UDim2.new(0, 0, 0, 40)
+	detailsContainer.BackgroundTransparency = 1; detailsContainer.ClipsDescendants = true
+	detailsContainer.Visible = false; detailsContainer.Parent = playerMainFrame
 
-    local detailsLayout = Instance.new("UIListLayout")
-    detailsLayout.Padding = UDim.new(0, 4)
-    detailsLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    detailsLayout.Parent = detailsContainer
+	local detailsLayout = Instance.new("UIListLayout"); detailsLayout.Padding = UDim.new(0, 5)
+	detailsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; detailsLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	detailsLayout.Parent = detailsContainer
+	local detailsPadding = Instance.new("UIPadding"); detailsPadding.PaddingTop = UDim.new(0, 10); detailsPadding.PaddingBottom = UDim.new(0, 10)
+	detailsPadding.PaddingLeft = UDim.new(0, 10); detailsPadding.PaddingRight = UDim.new(0, 10); detailsPadding.Parent = detailsContainer
 
-	-- Tab-System (jetzt mit Scrolling)
-	local tabScrollingFrame = Instance.new("ScrollingFrame")
-	tabScrollingFrame.Name = "TabScrollingFrame"
-	tabScrollingFrame.Size = UDim2.new(1, 0, 0, 35)
-	tabScrollingFrame.BackgroundTransparency = 1
-	tabScrollingFrame.BorderSizePixel = 0
-	tabScrollingFrame.ScrollingDirection = Enum.ScrollingDirection.X
-	tabScrollingFrame.ScrollBarImageColor3 = Color3.fromRGB(150, 150, 150)
-	tabScrollingFrame.ScrollBarThickness = 4
-	tabScrollingFrame.Parent = detailsContainer
-	tabScrollingFrame.LayoutOrder = 1
+	-- Tab System
+	local tabContainer = Instance.new("Frame"); tabContainer.Name = "TabContainer"; tabContainer.Size = UDim2.new(1, 0, 0, 30)
+	tabContainer.BackgroundTransparency = 1; tabContainer.Parent = detailsContainer; tabContainer.LayoutOrder = 1
+	local tabLayout = Instance.new("UIListLayout"); tabLayout.FillDirection = Enum.FillDirection.Horizontal
+	tabLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; tabLayout.Padding = UDim.new(0, 5); tabLayout.Parent = tabContainer
 
-	local tabContainer = Instance.new("Frame")
-	tabContainer.Name = "TabContainer"
-	tabContainer.Size = UDim2.new(0, 0, 1, 0)
-	tabContainer.AutomaticSize = Enum.AutomaticSize.X
-	tabContainer.BackgroundTransparency = 1
-	tabContainer.Parent = tabScrollingFrame
+	-- NEW: Scrolling frame for pages to prevent button overflow
+	local pagesScrollingFrame = Instance.new("ScrollingFrame"); pagesScrollingFrame.Name = "PagesScrollingFrame"
+	pagesScrollingFrame.Size = UDim2.new(1, 0, 0, 250); pagesScrollingFrame.BackgroundTransparency = 1
+	pagesScrollingFrame.Parent = detailsContainer; pagesScrollingFrame.LayoutOrder = 2
+	pagesScrollingFrame.BorderSizePixel = 0; pagesScrollingFrame.ScrollBarThickness = 4
 
-	local tabLayout = Instance.new("UIListLayout")
-	tabLayout.FillDirection = Enum.FillDirection.Horizontal
-	tabLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-	tabLayout.Padding = UDim.new(0, 5)
-	tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	tabLayout.Parent = tabContainer
-
-    -- Verbindung zur Aktualisierung der CanvasSize
-	tabContainer:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-		tabScrollingFrame.CanvasSize = UDim2.new(0, tabContainer.AbsoluteSize.X, 0, 0)
+	local pagesFrame = Instance.new("Frame"); pagesFrame.Name = "PagesFrame"; pagesFrame.Size = UDim2.new(1, 0, 0, 0)
+	pagesFrame.AutomaticSize = Enum.AutomaticSize.Y; pagesFrame.BackgroundTransparency = 1
+	pagesFrame.Parent = pagesScrollingFrame
+	pagesScrollingFrame.CanvasSize = UDim2.new(0,0,0,0)
+	pagesFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+		pagesScrollingFrame.CanvasSize = UDim2.new(0, 0, 0, pagesFrame.AbsoluteSize.Y)
 	end)
 
-	local pagesFrame = Instance.new("Frame")
-	pagesFrame.Name = "PagesFrame"
-	pagesFrame.Size = UDim2.new(1, 0, 0, 0)
-	pagesFrame.AutomaticSize = Enum.AutomaticSize.Y
-	pagesFrame.BackgroundTransparency = 1
-	pagesFrame.Parent = detailsContainer
-	pagesFrame.LayoutOrder = 2
-
-	local activeTabColor = Color3.fromRGB(80, 120, 220)
-	local inactiveTabColor = Color3.fromRGB(60, 60, 70)
-	local pages = {}
-	local tabs = {}
-	local tabLayoutOrder = 1
-
+	local pages = {}; local tabs = {}
 	local function createTab(name)
-		local page = Instance.new("Frame")
-		page.Name = name .. "Page"
-		page.Size = UDim2.new(1, 0, 0, 0)
-		page.AutomaticSize = Enum.AutomaticSize.Y
-		page.BackgroundTransparency = 1
-		page.Visible = false
+		local page = Instance.new("Frame"); page.Name = name .. "Page"; page.Size = UDim2.new(1, 0, 0, 0)
+		page.AutomaticSize = Enum.AutomaticSize.Y; page.BackgroundTransparency = 1; page.Visible = false
 		page.Parent = pagesFrame
-		local pageLayout = Instance.new("UIListLayout"); pageLayout.Padding = UDim.new(0, 5); pageLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center; pageLayout.Parent = page
+		local pageLayout = Instance.new("UIGridLayout"); pageLayout.CellPadding = UDim2.fromOffset(6, 6)
+		pageLayout.CellSize = UDim2.new(0.5, -3, 0, 35); pageLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+		pageLayout.SortOrder = Enum.SortOrder.LayoutOrder; pageLayout.Parent = page
 		pages[name] = page
 
-		local tabButton = Instance.new("TextButton")
-		tabButton.Name = name .. "Tab"
-        tabButton.AutomaticSize = Enum.AutomaticSize.X
-        tabButton.Size = UDim2.new(0,0,1,0)
-		tabButton.BackgroundColor3 = inactiveTabColor
-		tabButton.Text = " " .. name .. " "
-		tabButton.Font = Enum.Font.GothamBold
-		tabButton.TextSize = 14
-		tabButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-		tabButton.LayoutOrder = tabLayoutOrder
-		tabButton.Parent = tabContainer
-		local tabCorner = Instance.new("UICorner"); tabCorner.CornerRadius = UDim.new(0, 4); tabCorner.Parent = tabButton
-        local tabPadding = Instance.new("UIPadding"); tabPadding.PaddingLeft = UDim.new(0,10); tabPadding.PaddingRight = UDim.new(0,10); tabPadding.Parent = tabButton
+		local tabButton = Instance.new("TextButton"); tabButton.Name = name .. "Tab"; tabButton.AutomaticSize = Enum.AutomaticSize.X
+		tabButton.Size = UDim2.new(0, 0, 1, 0); tabButton.BackgroundColor3 = Theme.Colors.TabInactive
+		tabButton.Text = " " .. name .. " "; tabButton.Font = Theme.Fonts.Header; tabButton.TextSize = 14
+		tabButton.TextColor3 = Theme.Colors.Text; tabButton.Parent = tabContainer
+		local tabCorner = Instance.new("UICorner"); tabCorner.CornerRadius = UDim.new(0, 6); tabCorner.Parent = tabButton
+		local tabPadding = Instance.new("UIPadding"); tabPadding.PaddingLeft = UDim.new(0,10); tabPadding.PaddingRight = UDim.new(0,10); tabPadding.Parent = tabButton
 		tabs[name] = tabButton
-
-		tabLayoutOrder = tabLayoutOrder + 1
 
 		tabButton.MouseButton1Click:Connect(function()
 			for tabName, otherPage in pairs(pages) do
 				local isActive = (tabName == name)
 				otherPage.Visible = isActive
-				tabs[tabName].BackgroundColor3 = isActive and activeTabColor or inactiveTabColor
+				tabs[tabName].BackgroundColor3 = isActive and Theme.Colors.TabActive or Theme.Colors.TabInactive
+				if tabName == "Explorer" and isActive then
+					for _, child in ipairs(otherPage:GetChildren()) do if not child:IsA("UILayout") then child:Destroy() end end
+					pcall(function() createEntry(player, otherPage, 0) end)
+					pcall(function() if player.Character then createEntry(player.Character, otherPage, 0) end end)
+				end
 			end
 		end)
 		return page
 	end
 
-	-- Hier wird die Reihenfolge der Tabs festgelegt
-	local actionsPage = createTab("Aktionen")
+	local actionsPage = createTab("Actions")
 	local explorerPage = createTab("Explorer")
-	local powerupsPage = createTab("Power-Ups")
+	if player == localPlayer then
+		local localPowersPage = createTab("Local Powers")
+		local keybindsPage = createTab("Keybinds")
 
-    -- Einstellungs-Tab (nur für lokalen Spieler)
-    if player == localPlayer then
-        local settingsPage = createTab("Einstellungen")
+		keybindsPage:FindFirstChildOfClass("UIGridLayout"):Destroy()
+		local keybindListLayout = Instance.new("UIListLayout")
+		keybindListLayout.Padding = UDim.new(0, 5)
+		keybindListLayout.Parent = keybindsPage
 
-        local keybindFrame = Instance.new("Frame")
-        keybindFrame.Name = "KeybindFrame"
-        keybindFrame.Size = UDim2.new(1, -20, 0, 80)
-        keybindFrame.BackgroundTransparency = 1
-        keybindFrame.Parent = settingsPage
+		-- Create all keybind buttons
+		for id, bindInfo in pairs(keybinds) do
+			createKeybindButton(id, bindInfo, keybindsPage)
+		end
 
-        local keybindLayout = Instance.new("UIListLayout")
-        keybindLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-        keybindLayout.VerticalAlignment = Enum.VerticalAlignment.Center
-        keybindLayout.Padding = UDim.new(0, 5)
-        keybindLayout.Parent = keybindFrame
+		-- Add sliders for Local Powers
+		localPowersPage:FindFirstChildOfClass("UIGridLayout"):Destroy()
+		local powersListLayout = Instance.new("UIListLayout")
+		powersListLayout.Padding = UDim.new(0, 10)
+		powersListLayout.Parent = localPowersPage
 
-        local keybindInfo = Instance.new("TextLabel")
-        keybindInfo.Name = "KeybindInfo"
-        keybindInfo.Size = UDim2.new(1, 0, 0, 20)
-        keybindInfo.Text = "Hotkey zum Ein-/Ausblenden des Menüs"
-        keybindInfo.Font = Enum.Font.Gotham
-        keybindInfo.TextSize = 14
-        keybindInfo.TextColor3 = Color3.fromRGB(200, 200, 200)
-        keybindInfo.BackgroundTransparency = 1
-        keybindInfo.Parent = keybindFrame
+		createSlider("Walk Speed", 16, 200, localPlayerSettings.walkSpeed, localPowersPage, function(value)
+			localPlayerSettings.walkSpeed = value
+			if playerFunctionStates[localPlayer].speedBoost then
+				pcall(function() localPlayer.Character.Humanoid.WalkSpeed = value end)
+			end
+		end)
+		createSlider("Fly Speed", 25, 500, localPlayerSettings.flySpeed, localPowersPage, function(value)
+			localPlayerSettings.flySpeed = value
+		end)
+	end
 
-        keybindButton = Instance.new("TextButton")
-        keybindButton.Name = "KeybindButton"
-        keybindButton.Size = UDim2.new(1, 0, 0, 35)
-        keybindButton.BackgroundColor3 = Color3.fromRGB(80, 120, 220)
-        keybindButton.Font = Enum.Font.GothamBold
-        keybindButton.Text = "Toggle-Key ändern: " .. toggleUiKey.Name
-        keybindButton.TextColor3 = Color3.fromRGB(255, 255, 255)
-        keybindButton.TextSize = 16
-        keybindButton.Parent = keybindFrame
-        local kbBtnCorner = Instance.new("UICorner"); kbBtnCorner.Parent = keybindButton
+	-- Set default tab
+	tabs["Actions"].BackgroundColor3 = Theme.Colors.TabActive
+	pages["Actions"].Visible = true
+	explorerPage:FindFirstChildOfClass("UIGridLayout"):Destroy() -- Explorer uses ListLayout
+	local explorerListLayout = Instance.new("UIListLayout"); explorerListLayout.Padding = UDim.new(0, 1); explorerListLayout.Parent = explorerPage
 
-        keybindButton.MouseButton1Click:Connect(function()
-            if not isBindingKey then
-                isBindingKey = true
-                keybindButton.Text = "Taste drücken..."
-            end
-        end)
-    end
-
-	tabs["Aktionen"].BackgroundColor3 = activeTabColor
-	pages["Aktionen"].Visible = true
-
-	local disclaimerLabel = Instance.new("TextLabel")
-	disclaimerLabel.Name = "Disclaimer"
-	disclaimerLabel.Size = UDim2.new(1, 0, 0, 20)
-	disclaimerLabel.Text = "Aktionen sind nur lokal sichtbar!"
-	disclaimerLabel.Font = Enum.Font.SourceSansItalic
-	disclaimerLabel.TextSize = 13
-	disclaimerLabel.TextColor3 = Color3.fromRGB(255, 120, 120)
-	disclaimerLabel.BackgroundTransparency = 1
-	disclaimerLabel.TextXAlignment = Enum.TextXAlignment.Center
-	disclaimerLabel.Parent = detailsContainer
-	disclaimerLabel.LayoutOrder = 0
-
-	-- Frame für einfache Aktionen
-	local simpleActionsFrame = Instance.new("Frame")
-	simpleActionsFrame.AutomaticSize = Enum.AutomaticSize.Y
-	simpleActionsFrame.BackgroundTransparency = 1
-	simpleActionsFrame.Parent = actionsPage
-	local simpleActionsLayout = Instance.new("UIGridLayout")
-	simpleActionsLayout.CellSize = UDim2.new(0, 140, 0, 30)
-	simpleActionsLayout.CellPadding = UDim2.new(0, 5, 0, 5)
-	simpleActionsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	simpleActionsLayout.Parent = simpleActionsFrame
-
-	-- Frame für Aktionen mit Slidern
-	local sliderActionsFrame = Instance.new("Frame")
-	sliderActionsFrame.Size = UDim2.new(1, 0, 0, 0)
-	sliderActionsFrame.AutomaticSize = Enum.AutomaticSize.Y
-	sliderActionsFrame.BackgroundTransparency = 1
-	sliderActionsFrame.Parent = powerupsPage
-	local sliderActionsLayout = Instance.new("UIListLayout")
-	sliderActionsLayout.Padding = UDim.new(0, 5)
-	sliderActionsLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
-	sliderActionsLayout.Parent = sliderActionsFrame
-
-    local function createActionButton(name, text, color)
-		local button = Instance.new("TextButton")
-		button.Name = name; button.Text = text; button.TextSize = 14
-		button.BackgroundColor3 = color
-		button.TextColor3 = Color3.fromRGB(255,255,255)
-		button.Font = Enum.Font.Gotham
-		button.Parent = simpleActionsFrame
-		local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0,4); corner.Parent = button
+	local function createActionButton(text, iconChar, color, callback, parentFrame)
+		local button = Instance.new("TextButton"); button.Name = text; button.Text = ""; button.BackgroundColor3 = color
+		button.BorderSizePixel = 0; button.AutoButtonColor = false; button.Parent = parentFrame
+		local corner = Instance.new("UICorner"); corner.CornerRadius = UDim.new(0, 6); corner.Parent = button
+		local buttonIcon = Instance.new("TextLabel"); buttonIcon.Size = UDim2.fromScale(0.25, 1); buttonIcon.BackgroundTransparency = 1
+		buttonIcon.Font = Theme.Fonts.Header; buttonIcon.Text = iconChar; buttonIcon.TextColor3 = Theme.Colors.Text
+		buttonIcon.TextSize = 18; buttonIcon.Parent = button
+		local buttonLabel = Instance.new("TextLabel"); buttonLabel.Size = UDim2.fromScale(0.75, 1); buttonLabel.Position = UDim2.fromScale(0.25, 0)
+		buttonLabel.BackgroundTransparency = 1; buttonLabel.Font = Theme.Fonts.Regular; buttonLabel.Text = text
+		buttonLabel.TextColor3 = Theme.Colors.Text; buttonLabel.TextSize = 15; buttonLabel.TextXAlignment = Enum.TextXAlignment.Left
+		buttonLabel.Parent = button
+		button.MouseEnter:Connect(function() TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = color:lerp(Color3.new(1,1,1), 0.2)}):Play() end)
+		button.MouseLeave:Connect(function() TweenService:Create(button, TweenInfo.new(0.2), {BackgroundColor3 = color}):Play() end)
+		if callback then button.MouseButton1Click:Connect(callback) end
 		return button
 	end
 
-	local function createSliderControl(config)
-		local state = playerFunctionStates[player]
+	-- Create action buttons
+	createActionButton("Kill", "☠", Theme.Colors.Error, function() pcall(function() player.Character.Humanoid.Health = 0 end); showToast("Kill executed", Theme.Colors.Error) end, actionsPage)
+	createActionButton("Freeze", "❄", Color3.fromRGB(119, 191, 243), function() playerFunctionStates[player].isFrozen = not playerFunctionStates[player].isFrozen; showToast("Freeze " .. (playerFunctionStates[player].isFrozen and "ON" or "OFF"), playerFunctionStates[player].isFrozen and Theme.Colors.Success or Theme.Colors.Error) end, actionsPage)
+	createActionButton("Teleport To", "➡", Theme.Colors.Accent, function() pcall(function() localPlayer.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame; showToast("Teleported to " .. player.Name, Theme.Colors.Success) end) end, actionsPage)
+	createActionButton("Bring Here", "⬅", Theme.Colors.Accent, function() pcall(function() player.Character.HumanoidRootPart.CFrame = localPlayer.Character.HumanoidRootPart.CFrame; showToast(player.Name .. " brought here", Theme.Colors.Success) end) end, actionsPage)
+	createActionButton("Godmode", "✚", Theme.Colors.Warning, function() playerFunctionStates[player].isGodmode = not playerFunctionStates[player].isGodmode; showToast("Godmode " .. (playerFunctionStates[player].isGodmode and "ON" or "OFF"), playerFunctionStates[player].isGodmode and Theme.Colors.Success or Theme.Colors.Error) end, actionsPage)
+	createActionButton("ESP", "▣", Color3.fromRGB(212, 119, 243), function() playerFunctionStates[player].isESP = not playerFunctionStates[player].isESP; showToast("ESP " .. (playerFunctionStates[player].isESP and "ON" or "OFF"), playerFunctionStates[player].isESP and Theme.Colors.Success or Theme.Colors.Error) end, actionsPage)
 
-		local frame = Instance.new("Frame")
-		frame.Name = config.name .. "Control"
-		frame.Size = UDim2.new(1, 0, 0, 50)
-		frame.BackgroundTransparency = 1
-		frame.Parent = sliderActionsFrame
-
-		local title = Instance.new("TextLabel")
-		title.Size = UDim2.new(0.5, 0, 0, 20)
-		title.Text = config.text
-		title.Font = Enum.Font.GothamBold
-		title.TextSize = 14
-		title.TextColor3 = Color3.fromRGB(240, 240, 240)
-		title.TextXAlignment = Enum.TextXAlignment.Left
-		title.BackgroundTransparency = 1
-		title.Parent = frame
-
-		local valueLabel = Instance.new("TextLabel")
-		valueLabel.Size = UDim2.new(0.5, 0, 0, 20)
-		valueLabel.Position = UDim2.new(0.5, 0, 0, 0)
-		valueLabel.Font = Enum.Font.Gotham
-		valueLabel.TextSize = 14
-		valueLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
-		valueLabel.TextXAlignment = Enum.TextXAlignment.Right
-		valueLabel.BackgroundTransparency = 1
-		valueLabel.Parent = frame
-
-        local toggleButton
-        if config.toggleKey then
-            toggleButton = Instance.new("TextButton")
-            toggleButton.Name = "ToggleButton"
-            toggleButton.Size = UDim2.new(0, 50, 0, 20)
-            toggleButton.Position = UDim2.new(1, -50, 0, 0)
-            toggleButton.Font = Enum.Font.GothamBold
-            toggleButton.TextSize = 12
-            toggleButton.Parent = title
-
-            toggleButton.MouseButton1Click:Connect(function()
-                state[config.toggleKey] = not state[config.toggleKey]
-            end)
-        end
-
-		local sliderTrack = Instance.new("Frame")
-		sliderTrack.Size = UDim2.new(1, 0, 0, 6)
-		sliderTrack.Position = UDim2.new(0, 0, 0, 25)
-		sliderTrack.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
-		sliderTrack.Parent = frame
-		local trackCorner = Instance.new("UICorner"); trackCorner.Parent = sliderTrack
-
-		local sliderProgress = Instance.new("Frame")
-		sliderProgress.Size = UDim2.new(0, 0, 1, 0)
-		sliderProgress.BackgroundColor3 = config.color
-		sliderProgress.Parent = sliderTrack
-		local progressCorner = Instance.new("UICorner"); progressCorner.Parent = sliderProgress
-
-		local knob = Instance.new("TextButton")
-		knob.Size = UDim2.new(0, 16, 0, 16)
-		knob.AnchorPoint = Vector2.new(0.5, 0.5)
-		knob.Position = UDim2.new(0, 0, 0.5, 0)
-		knob.BackgroundColor3 = Color3.fromRGB(250, 250, 250)
-		knob.Text = ""
-		knob.ZIndex = 2
-		knob.Parent = sliderTrack
-		local knobCorner = Instance.new("UICorner"); knobCorner.CornerRadius = UDim.new(1,0); knobCorner.Parent = knob
-
-		local function updateSlider(value)
-			local percentage = (value - config.min) / (config.max - config.min)
-			percentage = math.clamp(percentage, 0, 1)
-			knob.Position = UDim2.new(percentage, 0, 0.5, 0)
-			sliderProgress.Size = UDim2.new(percentage, 0, 1, 0)
-			valueLabel.Text = string.format(config.format or "%.0f", value)
-		end
-
-		updateSlider(state[config.valueKey])
-
-		knob.InputBegan:Connect(function(input)
-			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-				local isDragging = true
-				local moveConn, upConn
-
-				moveConn = UserInputService.InputChanged:Connect(function(subInput)
-					if (subInput.UserInputType == Enum.UserInputType.MouseMovement or subInput.UserInputType == Enum.UserInputType.Touch) and isDragging then
-						local newX = subInput.Position.X - sliderTrack.AbsolutePosition.X
-						local percentage = math.clamp(newX / sliderTrack.AbsoluteSize.X, 0, 1)
-						local newValue = config.min + percentage * (config.max - config.min)
-						state[config.valueKey] = newValue
-						updateSlider(newValue)
-					end
-				end)
-
-				upConn = UserInputService.InputEnded:Connect(function(subInput)
-					if subInput.UserInputType == Enum.UserInputType.MouseButton1 or subInput.UserInputType == Enum.UserInputType.Touch then
-						isDragging = false
-						moveConn:Disconnect()
-						upConn:Disconnect()
-					end
-				end)
-			end
-		end)
-
-        return {frame=frame, toggleButton=toggleButton, title=title}
+	-- Local player only buttons (for display, logic is handled by keybinds)
+	if player == localPlayer then
+		createActionButton("Fly", "✈", Theme.Colors.ToggleOff, function() playerFunctionStates[localPlayer].isFlying = not playerFunctionStates[localPlayer].isFlying; showToast("Fly " .. (playerFunctionStates[player].isFlying and "ON" or "OFF"), playerFunctionStates[player].isFlying and Theme.Colors.Success or Theme.Colors.Error) end, actionsPage)
+		createActionButton("Speed", "⚡", Theme.Colors.ToggleOff, function() playerFunctionStates[localPlayer].speedBoost = not playerFunctionStates[localPlayer].speedBoost; showToast("Speed " .. (playerFunctionStates[player].speedBoost and "ON" or "OFF"), playerFunctionStates[player].speedBoost and Theme.Colors.Success or Theme.Colors.Error) end, actionsPage)
 	end
 
-	-- Erstellen der Buttons und Slider
-	local tpButton = createActionButton("Teleport", "Zu Spieler TP", Color3.fromRGB(80, 120, 220))
-	local killButton = createActionButton("Kill", "Kill", Color3.fromRGB(200, 40, 40))
-	local freezeButton = createActionButton("Freeze", "Einfrieren", Color3.fromRGB(80, 180, 220))
-	local floatButton = createActionButton("Float", "Schweben", Color3.fromRGB(180, 80, 220))
-	local godmodeButton = createActionButton("Godmode", "Godmode Aus", Color3.fromRGB(220, 180, 80))
-	local flyButton = createActionButton("Fly", "Fly Aus", Color3.fromRGB(100, 100, 255))
-    local espButton = createActionButton("ESP", "ESP Aus", Color3.fromRGB(200, 60, 200))
+	playerFrames[player] = { MainFrame = playerMainFrame, Connection = nil, ESPBox = nil }
 
-	local walkSpeedControl = createSliderControl({ name = "WalkSpeed", text = "WalkSpeed", color = Color3.fromRGB(80, 220, 120), toggleKey = "walkSpeedEnabled", valueKey = "walkSpeedValue", min = 16, max = 500, default = 16 })
-	local jumpPowerControl = createSliderControl({ name = "JumpPower", text = "JumpPower", color = Color3.fromRGB(80, 220, 120), toggleKey = "jumpPowerEnabled", valueKey = "jumpPowerValue", min = 50, max = 500, default = 50 })
-	local flySpeedControl = createSliderControl({ name = "FlySpeed", text = "Fly Speed", color = Color3.fromRGB(100, 180, 255), valueKey = "flySpeedValue", min = 25, max = 1000, default = 75 })
-    flySpeedControl.frame.Visible = false
-
-	-- Explorer-Frame
-	local explorerFrame = Instance.new("Frame")
-	explorerFrame.Name = "ExplorerFrame"
-	explorerFrame.Size = UDim2.new(1, 0, 0, 0)
-	explorerFrame.AutomaticSize = Enum.AutomaticSize.Y
-	explorerFrame.BackgroundTransparency = 1
-	explorerFrame.Parent = explorerPage
-	local explorerLayout = Instance.new("UIListLayout")
-	explorerLayout.Padding = UDim.new(0, 1)
-	explorerLayout.Parent = explorerFrame
-
-	local function rebuildExplorer()
-		for _, child in ipairs(explorerFrame:GetChildren()) do
-			if not child:IsA("UIListLayout") then child:Destroy() end
-		end
-		createEntry(player, explorerFrame, 0)
-		if player.Character then createEntry(player.Character, explorerFrame, 0) end
-	end
-
-	-- Verbindungen für die Buttons
-	tpButton.MouseButton1Click:Connect(function() pcall(function() localPlayer.Character.HumanoidRootPart.CFrame = player.Character.HumanoidRootPart.CFrame end) end)
-	killButton.MouseButton1Click:Connect(function() pcall(function() player.Character.Humanoid.Health = 0 end) end)
-	freezeButton.MouseButton1Click:Connect(function() playerFunctionStates[player].isFrozen = not playerFunctionStates[player].isFrozen end)
-	floatButton.MouseButton1Click:Connect(function() playerFunctionStates[player].isFloating = not playerFunctionStates[player].isFloating end)
-	godmodeButton.MouseButton1Click:Connect(function() playerFunctionStates[player].isGodmode = not playerFunctionStates[player].isGodmode end)
-	flyButton.MouseButton1Click:Connect(function() playerFunctionStates[player].isFlying = not playerFunctionStates[player].isFlying end)
-	espButton.MouseButton1Click:Connect(function() playerFunctionStates[player].isESP = not playerFunctionStates[player].isESP end)
-
+	-- [FIXED] This block now correctly calculates height, animates smoothly, and has the correct syntax.
 	playerHeader.MouseButton1Click:Connect(function()
 		uiState[player.Name] = not uiState[player.Name]
 		local isExpanded = uiState[player.Name]
-		playerHeader.Text = (isExpanded and "▼ " or "► ") .. player.Name
-		if isExpanded then rebuildExplorer() end
+
+		-- Manually calculate the content height to avoid issues with AbsoluteSize on hidden elements.
+		local contentHeight = tabContainer.Size.Y.Offset 
+			+ pagesScrollingFrame.Size.Y.Offset 
+			+ detailsLayout.Padding.Offset 
+			+ detailsPadding.PaddingTop.Offset 
+			+ detailsPadding.PaddingBottom.Offset
+
+		local targetHeight = isExpanded and (40 + contentHeight) or 40
+
+		-- Animate the frame size for a smooth expand/collapse effect
+		local tweenInfo = TweenInfo.new(Theme.Animation.Speed, Theme.Animation.Easing, Theme.Animation.Direction)
+		local goal = { Size = UDim2.new(1, -20, 0, targetHeight) }
+		local tween = TweenService:Create(playerMainFrame, tweenInfo, goal)
+		tween:Play()
+
+		-- Show/hide the container and update icon
 		detailsContainer.Visible = isExpanded
-	end)
+		icon.Text = isExpanded and "v" or ">"
 
-	local function handleCharacter()
-		if player.Character then
-			player.Character.ChildAdded:Connect(function() if uiState[player.Name] then rebuildExplorer() end end)
-			player.Character.ChildRemoved:Connect(function() if uiState[player.Name] then rebuildExplorer() end end)
+		-- If we are expanding into the Explorer tab, refresh its content
+		if isExpanded and pages["Explorer"].Visible then
+			for _, child in ipairs(pages["Explorer"]:GetChildren()) do 
+				if not child:IsA("UILayout") then child:Destroy() end 
+			end
+			pcall(function() createEntry(player, pages["Explorer"], 0) end)
+			pcall(function() if player.Character then createEntry(player.Character, pages["Explorer"], 0) end end)
 		end
-	end
-
-	player.CharacterAdded:Connect(function(character)
-		handleCharacter()
-		if uiState[player.Name] then rebuildExplorer() end
 	end)
-	handleCharacter()
 
-	local espBox = Instance.new("BoxHandleAdornment")
-	espBox.Name = "ESP_Box"
-	espBox.AlwaysOnTop = true
-	espBox.ZIndex = 5
-	espBox.Size = Vector3.new(4, 6, 2)
-	espBox.Transparency = 0.5
-	espBox.Visible = false
-	espBox.Parent = screenGui
+	local espBox = Instance.new("BoxHandleAdornment"); espBox.Name = "ESP_Box"; espBox.AlwaysOnTop = true
+	espBox.ZIndex = 5; espBox.Size = Vector3.new(4, 6, 2); espBox.Transparency = 0.5
+	espBox.Visible = false; espBox.Parent = screenGui
 
-	-- ######################################################################
-	-- ### DIES IST DIE ZENTRALE LOGIK-SCHLEIFE FÜR ALLE FÄHIGKEITEN      ###
-	-- ######################################################################
 	local connection = RunService.RenderStepped:Connect(function()
-		if not playerFrames[player] then return end
+		if not playerFrames[player] or not playerFunctionStates[player] then return end
 		local state = playerFunctionStates[player]
-		if not state then return end
-
 		pcall(function()
 			local char = player.Character
 			local humanoid = char and char:FindFirstChildOfClass("Humanoid")
-			if not humanoid then
-                if espBox then espBox.Visible = false end
-                return
-            end
+			if not humanoid then espBox.Visible = false; return end
+			humanoid.PlatformStand = state.isFrozen
+			humanoid.MaxHealth = state.isGodmode and math.huge or 100
+			if state.isGodmode then humanoid.Health = humanoid.MaxHealth end
 
-			if not (state.isFlying and player == localPlayer) then
-				local finalWalkSpeed = state.walkSpeedEnabled and state.walkSpeedValue or 16
-				local finalJumpPower = state.jumpPowerEnabled and state.jumpPowerValue or 50
-				local finalPlatformStand = false
-
-				if state.isFloating then finalPlatformStand = true end
-				if state.isFrozen then finalWalkSpeed, finalJumpPower = 0, 0 end
-
-				humanoid.WalkSpeed = finalWalkSpeed
-				humanoid.UseJumpPower = true
-				humanoid.JumpPower = finalJumpPower
-				humanoid.PlatformStand = finalPlatformStand
+			if player == localPlayer then
+				humanoid.WalkSpeed = state.speedBoost and localPlayerSettings.walkSpeed or 16
 			end
-
-			if state.isGodmode then humanoid.MaxHealth = math.huge; humanoid.Health = humanoid.MaxHealth else humanoid.MaxHealth = 100 end
 
 			if state.isESP and char:FindFirstChild("HumanoidRootPart") then
-				espBox.Adornee = char.HumanoidRootPart
-				espBox.Visible = true
-				if player.Team == localPlayer.Team and player.Team ~= nil then
-					espBox.Color3 = Color3.fromRGB(0, 255, 0)
-				else
-					espBox.Color3 = Color3.fromRGB(255, 0, 0)
-				end
-			else
-				espBox.Visible = false
-			end
-
-			freezeButton.Text = state.isFrozen and "Auftauen" or "Einfrieren"; freezeButton.BackgroundColor3 = state.isFrozen and Color3.fromRGB(220,120,80) or Color3.fromRGB(80,180,220)
-			floatButton.Text = state.isFloating and "Fallen" or "Schweben"; floatButton.BackgroundColor3 = state.isFloating and Color3.fromRGB(220,180,80) or Color3.fromRGB(180,80,220)
-			godmodeButton.Text = state.isGodmode and "Godmode An" or "Godmode Aus"; godmodeButton.BackgroundColor3 = state.isGodmode and Color3.fromRGB(40,200,40) or Color3.fromRGB(220,180,80)
-			flyButton.Text = state.isFlying and "Fly An" or "Fly Aus"; flyButton.BackgroundColor3 = state.isFlying and Color3.fromRGB(100,180,255) or Color3.fromRGB(100,100,255)
-			espButton.Text = state.isESP and "ESP An" or "ESP Aus"; espButton.BackgroundColor3 = state.isESP and Color3.fromRGB(255, 80, 255) or Color3.fromRGB(200, 60, 200)
-
-			walkSpeedControl.toggleButton.Text = state.walkSpeedEnabled and "An" or "Aus"; walkSpeedControl.toggleButton.BackgroundColor3 = state.walkSpeedEnabled and Color3.fromRGB(40,200,120) or Color3.fromRGB(100,100,100)
-			jumpPowerControl.toggleButton.Text = state.jumpPowerEnabled and "An" or "Aus"; jumpPowerControl.toggleButton.BackgroundColor3 = state.jumpPowerEnabled and Color3.fromRGB(40,200,120) or Color3.fromRGB(100,100,100)
-
-            local jumpDisabled = state.isFlying or state.isFloating
-            jumpPowerControl.title.TextColor3 = jumpDisabled and Color3.fromRGB(120,120,120) or Color3.fromRGB(240,240,240)
-            jumpPowerControl.toggleButton.BackgroundColor3 = jumpDisabled and Color3.fromRGB(80,80,80) or (state.jumpPowerEnabled and Color3.fromRGB(40,200,120) or Color3.fromRGB(100,100,100))
-            jumpPowerControl.toggleButton.AutoButtonColor = not jumpDisabled
-
-            flySpeedControl.frame.Visible = state.isFlying
-
+				espBox.Adornee = char.HumanoidRootPart; espBox.Visible = true
+				espBox.Color3 = (player.Team and player.Team == localPlayer.Team) and Theme.Colors.Success or Theme.Colors.Error
+			else espBox.Visible = false end
 		end)
 	end)
-
-	playerFrames[player] = {Frame = playerMainFrame, Connection = connection, ESPBox = espBox}
+	playerFrames[player].Connection = connection; playerFrames[player].ESPBox = espBox
 end
 
-function onPlayerRemoving(player)
+-- Function to remove player entry
+local function onPlayerRemoving(player)
 	if playerFrames[player] then
-		playerFrames[player].Connection:Disconnect()
-		if playerFrames[player].ESPBox then
-			playerFrames[player].ESPBox:Destroy()
-		end
-		playerFrames[player].Frame:Destroy()
-		playerFrames[player] = nil
-		playerFunctionStates[player] = nil
-		uiState[player.Name] = nil
+		if playerFrames[player].Connection then playerFrames[player].Connection:Disconnect() end
+		if playerFrames[player].ESPBox then playerFrames[player].ESPBox:Destroy() end
+		if playerFrames[player].MainFrame then playerFrames[player].MainFrame:Destroy() end
+		playerFrames[player] = nil; playerFunctionStates[player] = nil; uiState[player.Name] = nil
+		if selectedPlayer == player then selectedPlayer = nil end
 	end
 end
 
--- #################### Globale Logik für LOKALEN Spieler (Fliegen) ####################
-
-table.insert(globalConnections, RunService.RenderStepped:Connect(function()
+-- #region Local Player Power Handlers
+local flyGyro, flyVelocity
+local function updateFly(state)
 	pcall(function()
-		if not localPlayer or not localPlayer.Character or not playerFunctionStates[localPlayer] then return end
-
-		local state = playerFunctionStates[localPlayer]
-		local hrp = localPlayer.Character:FindFirstChild("HumanoidRootPart")
-
-		if not state.isFlying or not hrp then
+		local hrp = localPlayer.Character and localPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if not state or not hrp then
 			if flyGyro then flyGyro:Destroy(); flyGyro = nil end
 			if flyVelocity then flyVelocity:Destroy(); flyVelocity = nil end
+			local humanoid = localPlayer.Character and localPlayer.Character:FindFirstChildOfClass("Humanoid")
+			if humanoid and humanoid.PlatformStand then humanoid.PlatformStand = false end
 			return
 		end
 
 		local humanoid = localPlayer.Character:FindFirstChildOfClass("Humanoid")
-		if not humanoid then return end
+		if not humanoid then return end; humanoid.PlatformStand = true
 
-		humanoid.PlatformStand = true
-		if not flyGyro then
+		if not flyGyro or flyGyro.Parent ~= hrp then
 			flyGyro = Instance.new("BodyGyro", hrp)
 			flyGyro.MaxTorque = Vector3.new(math.huge, math.huge, math.huge)
-			flyGyro.D = 100; flyGyro.P = 5000
+			flyGyro.D = 100
+			flyGyro.P = 5000
 		end
-		if not flyVelocity then
+		if not flyVelocity or flyVelocity.Parent ~= hrp then
 			flyVelocity = Instance.new("BodyVelocity", hrp)
 			flyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
 			flyVelocity.P = 1250
 		end
 
 		flyGyro.CFrame = workspace.CurrentCamera.CFrame
-
-		local currentFlySpeed = state.flySpeedValue
-		if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then
-			currentFlySpeed = currentFlySpeed * 2.5 -- Sprint multiplier
-		end
-
 		local moveVector = Vector3.new()
-		if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVector = moveVector + Vector3.new(0,0,-1) end
-		if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVector = moveVector + Vector3.new(0,0,1) end
-		if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVector = moveVector + Vector3.new(1,0,0) end
-		if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVector = moveVector + Vector3.new(-1,0,0) end
-		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVector = moveVector + Vector3.new(0,1,0) end
-		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveVector = moveVector + Vector3.new(0,-1,0) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveVector += Vector3.new(0,0,-1) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveVector += Vector3.new(0,0,1) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveVector += Vector3.new(-1,0,0) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveVector += Vector3.new(1,0,0) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveVector += Vector3.new(0,1,0) end
+		if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then moveVector += Vector3.new(0,-1,0) end
 
-		flyVelocity.Velocity = moveVector.Magnitude > 0 and (workspace.CurrentCamera.CFrame:VectorToWorldSpace(moveVector.Unit)) * currentFlySpeed or Vector3.new(0,0,0)
+		if moveVector.Magnitude > 0 then
+			flyVelocity.Velocity = (workspace.CurrentCamera.CFrame.LookVector * -moveVector.Z + workspace.CurrentCamera.CFrame.RightVector * moveVector.X + Vector3.new(0, moveVector.Y, 0)).Unit * localPlayerSettings.flySpeed
+		else
+			flyVelocity.Velocity = Vector3.new()
+		end
 	end)
-end))
-
--- #################### Globale Eingabelogik (Key-Binding & UI Toggle) ####################
-table.insert(globalConnections, UserInputService.InputBegan:Connect(function(input, gameProcessedEvent)
-    if isBindingKey then
-        if input.UserInputType == Enum.UserInputType.Keyboard then
-            toggleUiKey = input.KeyCode
-            isBindingKey = false
-            if keybindButton then
-                keybindButton.Text = "Toggle-Key ändern: " .. toggleUiKey.Name
-            end
-        end
-    elseif input.KeyCode == toggleUiKey then
-        -- Verhindert das Umschalten, wenn in einem Textfeld getippt wird (z.B. Chat)
-        if gameProcessedEvent then return end
-        mainContainer.Visible = not mainContainer.Visible
-    end
-end))
-
-
--- #################### INITIALISIERUNG & EVENTS ####################
-for _, player in ipairs(Players:GetPlayers()) do
-	createPlayerEntry(player)
 end
 
-table.insert(globalConnections, Players.PlayerAdded:Connect(createPlayerEntry))
-table.insert(globalConnections, Players.PlayerRemoving:Connect(onPlayerRemoving))
 
+table.insert(globalConnections, RunService.RenderStepped:Connect(function()
+	if playerFunctionStates[localPlayer] then
+		updateFly(playerFunctionStates[localPlayer].isFlying)
+	end
+end))
+
+-- Handle keybinds
+table.insert(globalConnections, UserInputService.InputBegan:Connect(function(input, gameProcessed)
+	if gameProcessed and not isBindingKey then return end
+
+	if isBindingKey and activeKeybindButton then
+		if input.UserInputType == Enum.UserInputType.Keyboard then
+			local key = input.KeyCode
+			local bindId = activeKeybindButton.Parent.Name:gsub("KeybindFrame", "")
+
+			keybinds[bindId].key = key
+			activeKeybindButton.Text = key.Name
+			activeKeybindButton.BackgroundColor3 = Theme.Colors.Secondary
+			showToast(keybinds[bindId].name .. " key set to " .. key.Name, Theme.Colors.Success)
+			isBindingKey = false
+			activeKeybindButton = nil
+		end
+		return
+	end
+
+	-- Check for action keybinds
+	for id, bindInfo in pairs(keybinds) do
+		if input.KeyCode == bindInfo.key then
+			if id == "toggleUi" then
+				mainContainer.Visible = not mainContainer.Visible
+				showToast("UI " .. (mainContainer.Visible and "Unhidden" or "Hidden"), mainContainer.Visible and Theme.Colors.Success or Theme.Colors.Error)
+			elseif playerFunctionStates[localPlayer] then
+				if id == "fly" then
+					playerFunctionStates[localPlayer].isFlying = not playerFunctionStates[localPlayer].isFlying
+					showToast("Fly " .. (playerFunctionStates[localPlayer].isFlying and "ON" or "OFF"), playerFunctionStates[localPlayer].isFlying and Theme.Colors.Success or Theme.Colors.Error)
+				elseif id == "speed" then
+					playerFunctionStates[localPlayer].speedBoost = not playerFunctionStates[localPlayer].speedBoost
+					showToast("Speed " .. (playerFunctionStates[localPlayer].speedBoost and "ON" or "OFF"), playerFunctionStates[localPlayer].speedBoost and Theme.Colors.Success or Theme.Colors.Error)
+				end
+			end
+		end
+	end
+end))
+-- #endregion
+
+-- Main function to initialize
+local function initialize()
+	for _, player in ipairs(Players:GetPlayers()) do createPlayerEntry(player) end
+	table.insert(globalConnections, Players.PlayerAdded:Connect(createPlayerEntry))
+	table.insert(globalConnections, Players.PlayerRemoving:Connect(onPlayerRemoving))
+end
+
+-- Graceful shutdown when the script is destroyed
 script.Destroying:Connect(cleanupAndDestroy)
+
+initialize()
+showToast("Enhanced Player-Explorer Loaded!", Theme.Colors.Success)
+print("CLIENT: Enhanced Player Explorer v33.1 finished loading.")
